@@ -177,15 +177,15 @@ with tabs[0]:
         x=alt.X('Mes:N', sort=orden_meses, title=None,
                 axis=alt.Axis(labelAngle=0, domain=False, ticks=False)),
         xOffset=alt.XOffset('Tipo:N', sort=['Ingresos', 'Gastos'],
-                            scale=alt.Scale(paddingInner=0.04, paddingOuter=0.02)),
+                            scale=alt.Scale(paddingInner=0, paddingOuter=0)),
         y=alt.Y('Importe:Q', title='Euros',
-                axis=alt.Axis(grid=False, domain=False, tickCount=5, format=',.0f')),
+                axis=alt.Axis(grid=False, domain=False, tickCount=5, format=',.0f', labelLimit=75)),
         color=alt.Color('Tipo:N', sort=['Ingresos', 'Gastos'], title=None,
                         scale=alt.Scale(domain=['Ingresos', 'Gastos'], range=['#0875d1', '#82c8fa'])),
         tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Tipo:N'),
                  alt.Tooltip('Etiqueta:N', title='Importe')]
     )
-    barras = base.mark_bar(size=30)
+    barras = base.mark_bar(size=38)
     etiquetas = base.transform_filter('datum.Importe > 0').mark_text(
         dy=-9, fontSize=11, color='#aebbd0'
     ).encode(text=alt.Text('Etiqueta:N'))
@@ -200,11 +200,11 @@ with tabs[0]:
         x=alt.X('Mes:N', sort=orden_meses, title=None,
                 axis=alt.Axis(labelAngle=0, domain=False, ticks=False)),
         y=alt.Y('Ahorro:Q', title='Euros',
-                axis=alt.Axis(grid=False, domain=False, format=',.0f')),
+                axis=alt.Axis(grid=False, domain=False, format=',.0f', labelLimit=75)),
         color=alt.condition('datum.Ahorro >= 0', alt.value('#188b73'), alt.value('#d65b62')),
         tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Etiqueta:N', title='Ahorro')]
     )
-    ahorro_barras = ahorro_base.mark_bar(size=36)
+    ahorro_barras = ahorro_base.mark_bar(size=76)
     ahorro_etiquetas_pos = ahorro_base.transform_filter('datum.Ahorro > 0').mark_text(
         dy=-9, fontSize=11, color='#aebbd0'
     ).encode(text=alt.Text('Etiqueta:N'))
