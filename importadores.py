@@ -44,7 +44,10 @@ def clasificar(banco, concepto, descripcion, importe, tipo_banco=''):
         return 'ingreso', 'Intereses', True
     if t == 'BONIFICACIÓN' or 'SAVEBACK' in s:
         return 'ingreso', 'Bonificación', True
-    if 'BIZUM' in s or 'TRANSFERENCIA' in s or 'TRASPASO' in s:
+    # Bizum enviado = gasto; Bizum recibido = ingreso.
+    if 'BIZUM' in s:
+        return ('ingreso' if importe > 0 else 'gasto'), '', True
+    if 'TRANSFERENCIA' in s or 'TRASPASO' in s:
         return ('ingreso' if importe > 0 else 'gasto'), 'Revisar naturaleza', False
     return ('ingreso' if importe > 0 else 'gasto'), '', True
 
