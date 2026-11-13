@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import date
 from decimal import Decimal
 from supabase import create_client
@@ -163,9 +164,26 @@ with tabs[0]:
         g = sum(float(m['importe']) for m in del_mes if m['tipo'] == 'gasto')
         filas_ano.append({'Mes': ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'][numero_mes-1],
                          'Ingresos': i, 'Gastos': g, 'Ahorro': i-g})
-    anual = pd.DataFrame(filas_ano).set_index('Mes')
-    st.bar_chart(anual[['Ingresos', 'Gastos']], use_container_width=True)
-    st.line_chart(anual[['Ahorro']], use_container_width=True)
+    anual = pd.DataFrame(filas_ano)
+    orden_meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+    datos_grafica = anual.melt(id_vars='Mes', value_vars=['Ingresos', 'Gastos'],
+                               var_name='Tipo', value_name='Importe')
+    base = alt.Chart(datos_grafica).encode(
+        x=alt.X('Mes:N', sort=orden_meses, title=None,
+                axis=alt.Axis(labelAngle=0, domain=False, ticks=False)),
+        xOffset=alt.XOffset('Tipo:N', sort=['Ingresos', 'Gastos']),
+        y=alt.Y('Importe:Q', title='Euros', axis=alt.Axis(grid=False, domain=False, tickCount=5)),
+        color=alt.Color('Tipo:N', sort=['Ingresos', 'Gastos'], title=None,
+                        scale=alt.Scale(domain=['Ingresos', 'Gastos'], range=['#0875d1', '#82c8fa'])),
+        tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Tipo:N'),
+                 alt.Tooltip('Importe:Q', title='Importe (€)', format=',.0f')]
+    )
+    barras = base.mark_bar(size=24)
+    etiquetas = base.transform_filter('datum.Importe > 0').mark_text(
+        dy=-8, fontSize=11, color='#aebbd0'
+    ).encode(text=alt.Text('Importe:Q', format=',.0f'))
+    st.altair_chart((barras + etiquetas).properties(height=360).configure_view(stroke=None),
+                    use_container_width=True)
     st.caption(f"Total {ano}: ingresos {dinero(anual['Ingresos'].sum())} · gastos {dinero(anual['Gastos'].sum())} · ahorro {dinero(anual['Ahorro'].sum())}")
     if seleccion:
         por_categoria = {}
