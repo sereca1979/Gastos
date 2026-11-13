@@ -62,6 +62,48 @@ def dinero(valor):
     return f'{float(valor):,.2f} €'.replace(',', 'X').replace('.', ',').replace('X', '.')
 
 
+CATEGORIAS_INICIALES = {
+    'gasto': ['Alimentación', 'Restaurantes y ocio', 'Vivienda', 'Suministros',
+              'Transporte', 'Salud', 'Ropa y compras', 'Viajes',
+              'Seguros e impuestos', 'Regalos y donaciones', 'Otros gastos'],
+    'ingreso': ['Nómina', 'Intereses', 'Devoluciones', 'Otros ingresos']
+}
+
+
+def sugerir_categoria(concepto, tipo, aviso=''):
+    """Reglas conservadoras: lo ambiguo requiere revisión."""
+    import unicodedata
+    texto = unicodedata.normalize('NFKD', str(concepto).upper())
+    texto = ''.join(c for c in texto if not unicodedata.combining(c))
+    if tipo == 'transferencia':
+        return '', 'Excluido / revisar'
+    if tipo == 'ingreso':
+        reglas = [
+            ('Intereses', ['INTERES', 'INTEREST']),
+            ('Nómina', ['NOMINA', 'PAYROLL', 'SALARIO']),
+            ('Devoluciones', ['DEVOLUCION', 'REEMBOLSO', 'REFUND', 'REINTEGRO COMPRA']),
+        ]
+    else:
+        reglas = [
+            ('Alimentación', ['MERCADONA', 'LIDL', 'ALDI', 'CARREFOUR', 'DIA ', 'EROSKI', 'ALCAMPO', 'SUPERMERCADO']),
+            ('Restaurantes y ocio', ['RESTAURANTE', 'CAFETERIA', 'BAR ', 'BURGER KING', 'MCDONALD', 'JUST EAT', 'GLOVO', 'CINE']),
+            ('Vivienda', ['ALQUILER', 'COMUNIDAD PROPIETARIOS', 'HIPOTECA']),
+            ('Suministros', ['IBERDROLA', 'ENDESA', 'NATURGY', 'MOVISTAR', 'VODAFONE', 'ORANGE', 'DIGI ', 'AGUA ', 'ELECTRICIDAD']),
+            ('Transporte', ['REPSOL', 'CEPSA', 'MOEVE', 'GASOLINERA', 'RENFE', 'CABIFY', 'UBER', 'PARKING', 'METRO ']),
+            ('Salud', ['FARMACIA', 'DENTISTA', 'CLINICA', 'HOSPITAL', 'OPTICA']),
+            ('Ropa y compras', ['ZARA', 'PRIMARK', 'DECATHLON', 'H&M', 'CORTE INGLES']),
+            ('Viajes', ['BOOKING', 'AIRBNB', 'HOTEL ', 'IBERIA', 'RYANAIR', 'VUELING']),
+            ('Seguros e impuestos', ['SEGURO', 'HACIENDA', 'AEAT', 'IBI ', 'IMPUESTO', 'DGT ']),
+            ('Regalos y donaciones', ['DONATIVO', 'DONACION', 'ONG ']),
+        ]
+    for categoria, patrones in reglas:
+        if any(p in texto for p in patrones):
+            return categoria, 'Alta'
+    if 'BIZUM' in texto:
+        return ('Otros ingresos' if tipo == 'ingreso' else 'Otros gastos'), 'Revisar Bizum'
+    return ('Otros ingresos' if tipo == 'ingreso' else 'Otros gastos'), 'Revisar'
+
+
 st.title('Control de gastos')
 if not sesion_valida():
     for clave in ('cliente', 'usuario_id'):
@@ -111,6 +153,20 @@ with tabs[0]:
     a.metric('Ingresos', dinero(ingresos))
     b.metric('Gastos', dinero(gastos))
     c.metric('Ahorro', dinero(ingresos - gastos))
+    st.subheader('Evolución anual')
+    anos = sorted({int(str(m['fecha'])[:4]) for m in movimientos} | {hoy.year}, reverse=True)
+    ano = st.selectbox('Año', anos, key='ano_resumen')
+    filas_ano = []
+    for numero_mes in range(1, 13):
+        del_mes = [m for m in movimientos if str(m['fecha']).startswith(f'{ano}-{numero_mes:02d}')]
+        i = sum(float(m['importe']) for m in del_mes if m['tipo'] == 'ingreso')
+        g = sum(float(m['importe']) for m in del_mes if m['tipo'] == 'gasto')
+        filas_ano.append({'Mes': ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'][numero_mes-1],
+                         'Ingresos': i, 'Gastos': g, 'Ahorro': i-g})
+    anual = pd.DataFrame(filas_ano).set_index('Mes')
+    st.bar_chart(anual[['Ingresos', 'Gastos']], use_container_width=True)
+    st.line_chart(anual[['Ahorro']], use_container_width=True)
+    st.caption(f"Total {ano}: ingresos {dinero(anual['Ingresos'].sum())} · gastos {dinero(anual['Gastos'].sum())} · ahorro {dinero(anual['Ahorro'].sum())}")
     if seleccion:
         por_categoria = {}
         for m in seleccion:
@@ -198,6 +254,21 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader('Categorías personalizables')
+    st.caption('Puedes cargar las 15 categorías acordadas sin duplicar las que ya existan.')
+    if st.button('Crear categorías iniciales que falten'):
+        existentes_cat = {(c['tipo'], c['nombre'].casefold()) for c in categorias}
+        pendientes = [{'usuario_id': st.session_state.usuario_id, 'nombre': nombre, 'tipo': tipo}
+                      for tipo, nombres in CATEGORIAS_INICIALES.items() for nombre in nombres
+                      if (tipo, nombre.casefold()) not in existentes_cat]
+        if pendientes:
+            try:
+                ejecutar('categorias', 'insert', pendientes)
+                st.success(f'Creadas {len(pendientes)} categorías.')
+                st.rerun()
+            except Exception as exc:
+                st.error(f'No se pudieron crear las categorías: {exc}')
+        else:
+            st.info('Las 15 categorías ya están creadas.')
     with st.form('nueva_categoria', clear_on_submit=True):
         nombre = st.text_input('Nombre de la categoría')
         tipo_categoria = st.selectbox('Tipo de categoría', ['gasto', 'ingreso'])
@@ -266,16 +337,26 @@ with tabs[3]:
             nuevos = [m for m in leidos if m['huella'] not in existentes]
             st.write(f'Leídos: **{len(leidos)}** · Ya importados: **{len(leidos)-len(nuevos)}** · Nuevos: **{len(nuevos)}**')
             if nuevos:
+                categorias_por_tipo = {tipo: {c['nombre']: c['id'] for c in categorias if c['tipo'] == tipo}
+                                       for tipo in ('gasto', 'ingreso')}
+                sugerencias = [sugerir_categoria(m['concepto'], m['tipo'], m['observacion']) for m in nuevos]
                 filas = pd.DataFrame([{
-                    'Incluir': (True if 'BIZUM' in str(m['concepto']).upper() else m['incluir']), 'Fecha': m['fecha'], 'Banco': m['banco'],
+                    'Incluir': (True if 'BIZUM' in str(m['concepto']).upper() else m['incluir']),
+                    'Fecha': m['fecha'], 'Banco': m['banco'],
                     'Concepto': m['concepto'], 'Importe (€)': float(m['importe']),
-                    'Tipo': m['tipo'], 'Aviso': m['observacion']
-                } for m in nuevos])
+                    'Tipo': m['tipo'],
+                    'Categoría': sugerencias[i][0] if sugerencias[i][0] in categorias_por_tipo.get(m['tipo'], {}) else 'Sin categoría',
+                    'Revisión': sugerencias[i][1], 'Aviso': m['observacion']
+                } for i, m in enumerate(nuevos)])
+                todas_categorias = ['Sin categoría'] + [n for nombres in CATEGORIAS_INICIALES.values() for n in nombres]
+                todas_categorias += [c['nombre'] for c in categorias if c['nombre'] not in todas_categorias]
                 revisado = st.data_editor(filas, hide_index=True, use_container_width=True,
-                    disabled=['Fecha', 'Banco', 'Concepto', 'Importe (€)', 'Aviso'],
-                    column_config={'Tipo': st.column_config.SelectboxColumn(
-                        'Tipo', options=['gasto', 'ingreso', 'transferencia'], required=True)},
-                    key=f'revision_importacion_{firma_archivo[3]}_bizum_v2')
+                    disabled=['Fecha', 'Banco', 'Concepto', 'Importe (€)', 'Aviso', 'Revisión'],
+                    column_config={
+                        'Tipo': st.column_config.SelectboxColumn('Tipo', options=['gasto', 'ingreso', 'transferencia'], required=True),
+                        'Categoría': st.column_config.SelectboxColumn('Categoría', options=todas_categorias, required=True),
+                    }, key=f'revision_importacion_{firma_archivo[3]}_categorias_v1')
+                st.caption('Revisa especialmente las filas con «Revisar». Las categorías pueden cambiarse antes de guardar. Para asignarlas, créalas primero en la pestaña Categorías.')
                 st.caption('Desmarca los movimientos que no quieras importar. Las transferencias no cuentan para el ahorro.')
                 if st.button('Guardar movimientos seleccionados', type='primary'):
                     elegidos = []
@@ -283,14 +364,22 @@ with tabs[3]:
                         if not bool(fila['Incluir']):
                             continue
                         m = nuevos[i]
+                        categoria_nombre = fila['Categoría']
+                        categoria_id = categorias_por_tipo.get(fila['Tipo'], {}).get(categoria_nombre)
+                        if categoria_nombre != 'Sin categoría' and categoria_id is None:
+                            st.error(f"La categoría «{categoria_nombre}» no existe para el tipo «{fila['Tipo']}». Créala o selecciona otra.")
+                            elegidos = None
+                            break
                         elegidos.append({
                             'usuario_id': st.session_state.usuario_id,
                             'fecha': m['fecha'], 'concepto': m['concepto'],
                             'importe': str(m['importe']), 'tipo': fila['Tipo'],
                             'origen': 'importacion', 'banco_origen': m['banco'],
-                            'huella_importacion': m['huella']
+                            'huella_importacion': m['huella'], 'categoria_id': categoria_id
                         })
-                    if not elegidos:
+                    if elegidos is None:
+                        pass
+                    elif not elegidos:
                         st.warning('No hay movimientos seleccionados.')
                     else:
                         try:
