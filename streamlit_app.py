@@ -267,7 +267,7 @@ with tabs[3]:
             st.write(f'Leídos: **{len(leidos)}** · Ya importados: **{len(leidos)-len(nuevos)}** · Nuevos: **{len(nuevos)}**')
             if nuevos:
                 filas = pd.DataFrame([{
-                    'Incluir': m['incluir'], 'Fecha': m['fecha'], 'Banco': m['banco'],
+                    'Incluir': (True if 'BIZUM' in str(m['concepto']).upper() else m['incluir']), 'Fecha': m['fecha'], 'Banco': m['banco'],
                     'Concepto': m['concepto'], 'Importe (€)': float(m['importe']),
                     'Tipo': m['tipo'], 'Aviso': m['observacion']
                 } for m in nuevos])
@@ -275,7 +275,7 @@ with tabs[3]:
                     disabled=['Fecha', 'Banco', 'Concepto', 'Importe (€)', 'Aviso'],
                     column_config={'Tipo': st.column_config.SelectboxColumn(
                         'Tipo', options=['gasto', 'ingreso', 'transferencia'], required=True)},
-                    key='revision_importacion')
+                    key=f'revision_importacion_{firma_archivo[3]}_bizum_v2')
                 st.caption('Desmarca los movimientos que no quieras importar. Las transferencias no cuentan para el ahorro.')
                 if st.button('Guardar movimientos seleccionados', type='primary'):
                     elegidos = []
