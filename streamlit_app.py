@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import date
 from decimal import Decimal
 from supabase import create_client
+from importadores import ibercaja, trade_republic, huellas
 
 st.set_page_config(page_title='Control de gastos', page_icon='📊', layout='wide')
 
@@ -96,7 +97,7 @@ except Exception:
     st.stop()
 
 nombres_categorias = {c['id']: c['nombre'] for c in categorias}
-tabs = st.tabs(['Resumen', 'Movimientos', 'Categorías'])
+tabs = st.tabs(['Resumen', 'Movimientos', 'Categorías', 'Importar extractos'])
 
 with tabs[0]:
     st.subheader('Resumen mensual')
@@ -238,3 +239,70 @@ with tabs[2]:
                 st.rerun()
             except Exception:
                 st.error('No se puede eliminar una categoría utilizada por movimientos o presupuestos.')
+
+
+with tabs[3]:
+    st.subheader('Importar extractos bancarios')
+    st.caption('Revisa los movimientos antes de guardarlos. Las transferencias dudosas y operaciones de inversión se excluyen por defecto.')
+    banco = st.selectbox('Banco', ['Ibercaja', 'Trade Republic'])
+    archivo = st.file_uploader('Extracto', type=['xlsx'] if banco == 'Ibercaja' else ['pdf'], key='extracto')
+    if archivo is not None:
+        try:
+            datos = archivo.getvalue()
+            firma_archivo = (banco, archivo.name, len(datos), hash(datos))
+            if st.session_state.get('firma_archivo') != firma_archivo:
+                leidos = ibercaja(datos) if banco == 'Ibercaja' else trade_republic(datos)
+                leidos = huellas(leidos)
+                st.session_state.firma_archivo = firma_archivo
+                st.session_state.movimientos_importar = leidos
+            leidos = st.session_state.movimientos_importar
+            # Paginación para no superar el límite por defecto de Supabase (1000 filas).
+            existentes = set()
+            for inicio in range(0, len(leidos), 200):
+                lote = [m['huella'] for m in leidos[inicio:inicio+200]]
+                r = st.session_state.cliente.table('movimientos').select('huella_importacion').eq(
+                    'usuario_id', st.session_state.usuario_id).in_('huella_importacion', lote).execute()
+                existentes.update(x['huella_importacion'] for x in (r.data or []))
+            nuevos = [m for m in leidos if m['huella'] not in existentes]
+            st.write(f'Leídos: **{len(leidos)}** · Ya importados: **{len(leidos)-len(nuevos)}** · Nuevos: **{len(nuevos)}**')
+            if nuevos:
+                filas = pd.DataFrame([{
+                    'Incluir': m['incluir'], 'Fecha': m['fecha'], 'Banco': m['banco'],
+                    'Concepto': m['concepto'], 'Importe (€)': float(m['importe']),
+                    'Tipo': m['tipo'], 'Aviso': m['observacion']
+                } for m in nuevos])
+                revisado = st.data_editor(filas, hide_index=True, use_container_width=True,
+                    disabled=['Fecha', 'Banco', 'Concepto', 'Importe (€)', 'Aviso'],
+                    column_config={'Tipo': st.column_config.SelectboxColumn(
+                        'Tipo', options=['gasto', 'ingreso', 'transferencia'], required=True)},
+                    key='revision_importacion')
+                st.caption('Desmarca los movimientos que no quieras importar. Las transferencias no cuentan para el ahorro.')
+                if st.button('Guardar movimientos seleccionados', type='primary'):
+                    elegidos = []
+                    for i, fila in revisado.iterrows():
+                        if not bool(fila['Incluir']):
+                            continue
+                        m = nuevos[i]
+                        elegidos.append({
+                            'usuario_id': st.session_state.usuario_id,
+                            'fecha': m['fecha'], 'concepto': m['concepto'],
+                            'importe': str(m['importe']), 'tipo': fila['Tipo'],
+                            'origen': 'importacion', 'banco_origen': m['banco'],
+                            'huella_importacion': m['huella']
+                        })
+                    if not elegidos:
+                        st.warning('No hay movimientos seleccionados.')
+                    else:
+                        try:
+                            for inicio in range(0, len(elegidos), 100):
+                                st.session_state.cliente.table('movimientos').upsert(
+                                    elegidos[inicio:inicio+100], on_conflict='usuario_id,huella_importacion',
+                                    ignore_duplicates=True).execute()
+                            st.success(f'Importación completada. Seleccionados: {len(elegidos)}. Los duplicados se omiten.')
+                            st.rerun()
+                        except Exception as exc:
+                            st.error('No se pudo completar la importación. Verifica que has ejecutado la migración SQL.')
+            else:
+                st.info('No hay movimientos nuevos en este extracto.')
+        except Exception as exc:
+            st.error(f'Error al leer o consultar el extracto: {type(exc).__name__}: {str(exc)[:240]}')
