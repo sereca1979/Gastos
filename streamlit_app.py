@@ -242,17 +242,35 @@ with tabs[0]:
     ).configure_view(stroke=None)
     st.altair_chart(graficas, use_container_width=True)
     st.caption(f"Total {ano}: ingresos {dinero(anual['Ingresos'].sum())} · gastos {dinero(anual['Gastos'].sum())} · ahorro {dinero(anual['Ahorro'].sum())}")
-    if seleccion:
-        por_categoria = {}
-        for m in seleccion:
-            if m['tipo'] == 'gasto':
-                nombre = nombres_categorias.get(m.get('categoria_id'), 'Sin categoría')
-                por_categoria[nombre] = por_categoria.get(nombre, 0) + float(m['importe'])
-        if por_categoria:
-            st.subheader('Gastos por categoría')
-            st.bar_chart(pd.Series(por_categoria, name='Euros'))
+    st.subheader('Gastos por categoría')
+    mes_categoria = st.selectbox(
+        'Mes para el desglose',
+        meses,
+        format_func=lambda v: f"{['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][int(v[-2:])-1]} {v[:4]}",
+        key='mes_gastos_categoria'
+    )
+    por_categoria = {}
+    for m in movimientos:
+        if m['tipo'] == 'gasto' and str(m['fecha']).startswith(mes_categoria):
+            nombre = nombres_categorias.get(m.get('categoria_id'), 'Sin categoría')
+            por_categoria[nombre] = por_categoria.get(nombre, 0) + float(m['importe'])
+    if por_categoria:
+        datos_pie = pd.DataFrame([{'Categoría': k, 'Importe': v} for k,v in por_categoria.items()])
+        total_pie = datos_pie['Importe'].sum()
+        sectores = alt.Chart(datos_pie).mark_arc(innerRadius=85, outerRadius=155).encode(
+            theta=alt.Theta('Importe:Q', stack=True),
+            color=alt.Color('Categoría:N', legend=alt.Legend(title=None, orient='right')),
+            tooltip=['Categoría:N', alt.Tooltip('Importe:Q', title='Gasto (€)', format=',.2f'),
+                     alt.Tooltip('Porcentaje:Q', format='.1f', title='%')]
+        ).transform_calculate(Porcentaje=f'100 * datum.Importe / {total_pie}')
+        centro = alt.Chart(pd.DataFrame([{'texto': dinero(total_pie)}])).mark_text(
+            fontSize=21, fontWeight='bold'
+        ).encode(text='texto:N')
+        st.altair_chart((sectores + centro).properties(height=340).configure_view(stroke=None),
+                        use_container_width=True)
+        st.caption(f'Total de gastos del mes: **{dinero(total_pie)}**')
     else:
-        st.info('Todavía no hay movimientos en este mes.')
+        st.info('No hay gastos registrados en el mes seleccionado.')
 
 with tabs[1]:
     st.subheader('Nuevo movimiento')
@@ -283,49 +301,107 @@ with tabs[1]:
 
     st.subheader('Histórico de movimientos')
     if movimientos:
-        filas = [{
+        st.caption('Modifica la categoría directamente en la tabla y pulsa «Guardar categorías». '
+                   'Los cambios también se recordarán para próximas importaciones.')
+        tamano_tabla = st.selectbox('Movimientos por página', [100, 250, 500], index=1)
+        total_paginas = max(1, (len(movimientos) + tamano_tabla - 1) // tamano_tabla)
+        pagina_tabla = st.number_input('Página', min_value=1, max_value=total_paginas, value=1, step=1)
+        lote_tabla = movimientos[(pagina_tabla-1)*tamano_tabla:pagina_tabla*tamano_tabla]
+        filas = pd.DataFrame([{
             'Fecha': m['fecha'], 'Tipo': m['tipo'], 'Concepto': m['concepto'],
             'Importe (€)': float(m['importe']),
             'Categoría': nombres_categorias.get(m.get('categoria_id'), 'Sin categoría')
-        } for m in movimientos]
-        st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
-        opciones_mov = {f"{m['fecha']} · {m['concepto']} · {dinero(m['importe'])} · {m['id'][:8]}": m for m in movimientos}
-        elegido = st.selectbox('Selecciona un movimiento para editar o eliminar', list(opciones_mov))
-        actual = opciones_mov[elegido]
-        with st.form('editar_movimiento'):
-            nueva_fecha = st.date_input('Fecha', value=date.fromisoformat(actual['fecha']), key='edit_fecha')
-            nuevo_tipo = st.selectbox('Tipo', ['gasto', 'ingreso', 'transferencia'], index=['gasto', 'ingreso', 'transferencia'].index(actual['tipo']), key='edit_tipo')
-            nuevo_concepto = st.text_input('Concepto', value=actual['concepto'], key='edit_concepto')
-            nuevo_importe = st.number_input('Importe (€)', min_value=0.01, value=float(actual['importe']), format='%.2f', key='edit_importe')
-            cats_validas = [c for c in categorias if c['tipo'] == nuevo_tipo]
-            ids = [None] + [c['id'] for c in cats_validas]
-            etiquetas = ['Sin categoría'] + [c['nombre'] for c in cats_validas]
-            indice = ids.index(actual.get('categoria_id')) if actual.get('categoria_id') in ids else 0
-            nueva_categoria = st.selectbox('Categoría', range(len(ids)), index=indice, format_func=lambda i: etiquetas[i], key='edit_categoria')
-            col_guardar, col_eliminar = st.columns(2)
-            editar = col_guardar.form_submit_button('Guardar cambios')
-            eliminar = col_eliminar.form_submit_button('Eliminar definitivamente')
-        if editar:
-            if not nuevo_concepto.strip():
-                st.error('El concepto no puede estar vacío.')
+        } for m in lote_tabla])
+        opciones_categorias = ['Sin categoría'] + sorted({c['nombre'] for c in categorias})
+        tabla_editada = st.data_editor(
+            filas, hide_index=True, use_container_width=True,
+            disabled=['Fecha', 'Tipo', 'Concepto', 'Importe (€)'],
+            column_config={'Categoría': st.column_config.SelectboxColumn(
+                'Categoría', options=opciones_categorias, required=True)},
+            key=f'movimientos_editor_{pagina_tabla}_{tamano_tabla}'
+        )
+        if st.button('Guardar categorías', type='primary'):
+            mapa_tipo = {(c['tipo'], c['nombre']): c['id'] for c in categorias}
+            cambios = []
+            errores = []
+            reglas_nuevas = {}
+            for i, fila in tabla_editada.iterrows():
+                m = lote_tabla[i]
+                nueva = fila['Categoría']
+                actual = nombres_categorias.get(m.get('categoria_id'), 'Sin categoría')
+                if nueva == actual:
+                    continue
+                cat_id = None if nueva == 'Sin categoría' else mapa_tipo.get((m['tipo'], nueva))
+                if nueva != 'Sin categoría' and not cat_id:
+                    errores.append(f"{nueva} no es una categoría de {m['tipo']}")
+                    continue
+                cambios.append((m, cat_id))
+                if cat_id and m['tipo'] in ('gasto', 'ingreso'):
+                    clave = clave_aprendizaje(m['concepto'])
+                    reglas_nuevas[(m['tipo'], clave)] = {
+                        'usuario_id': st.session_state.usuario_id, 'tipo': m['tipo'],
+                        'clave_concepto': clave, 'categoria_id': cat_id
+                    }
+            if errores:
+                st.error('Hay categorías incompatibles: ' + '; '.join(sorted(set(errores))[:5]))
+            elif not cambios:
+                st.info('No hay categorías modificadas.')
             else:
                 try:
-                    ejecutar('movimientos', 'update', {
-                        'fecha': nueva_fecha.isoformat(), 'tipo': nuevo_tipo,
-                        'concepto': nuevo_concepto.strip(), 'importe': str(Decimal(str(nuevo_importe)).quantize(Decimal('0.01'))),
-                        'categoria_id': ids[nueva_categoria]
-                    }, actual['id'])
+                    for m, cat_id in cambios:
+                        ejecutar('movimientos', 'update', {'categoria_id': cat_id}, m['id'])
+                    if reglas_nuevas:
+                        try:
+                            st.session_state.cliente.table('reglas_categorias').upsert(
+                                list(reglas_nuevas.values()),
+                                on_conflict='usuario_id,tipo,clave_concepto').execute()
+                        except Exception:
+                            st.warning('Categorías actualizadas, pero no se guardaron todas las reglas aprendidas.')
+                    st.success(f'Se han actualizado {len(cambios)} movimientos.')
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f'No se pudieron guardar todos los cambios: {type(exc).__name__}')
+        st.caption('Para cambiar fecha, concepto, importe o eliminar un movimiento, utiliza la edición individual.')
+        opciones_mov = {f"{m['fecha']} · {m['concepto']} · {dinero(m['importe'])} · {m['id'][:8]}": m for m in movimientos}
+        with st.expander('Editar o eliminar un movimiento'):
+            elegido = st.selectbox('Movimiento', list(opciones_mov))
+            actual = opciones_mov[elegido]
+            with st.form('editar_movimiento'):
+                nueva_fecha = st.date_input('Fecha', value=date.fromisoformat(actual['fecha']), key='edit_fecha')
+                nuevo_tipo = st.selectbox('Tipo', ['gasto', 'ingreso', 'transferencia'],
+                    index=['gasto', 'ingreso', 'transferencia'].index(actual['tipo']), key='edit_tipo')
+                nuevo_concepto = st.text_input('Concepto', value=actual['concepto'], key='edit_concepto')
+                nuevo_importe = st.number_input('Importe (€)', min_value=0.01,
+                    value=float(actual['importe']), format='%.2f', key='edit_importe')
+                cats_validas = [c for c in categorias if c['tipo'] == nuevo_tipo]
+                ids = [None] + [c['id'] for c in cats_validas]
+                etiquetas = ['Sin categoría'] + [c['nombre'] for c in cats_validas]
+                indice = ids.index(actual.get('categoria_id')) if actual.get('categoria_id') in ids else 0
+                nueva_categoria = st.selectbox('Categoría', range(len(ids)), index=indice,
+                    format_func=lambda i: etiquetas[i], key='edit_categoria')
+                col_guardar, col_eliminar = st.columns(2)
+                editar = col_guardar.form_submit_button('Guardar cambios')
+                eliminar = col_eliminar.form_submit_button('Eliminar definitivamente')
+            if editar:
+                if not nuevo_concepto.strip():
+                    st.error('El concepto no puede estar vacío.')
+                else:
+                    try:
+                        ejecutar('movimientos', 'update', {
+                            'fecha': nueva_fecha.isoformat(), 'tipo': nuevo_tipo,
+                            'concepto': nuevo_concepto.strip(),
+                            'importe': str(Decimal(str(nuevo_importe)).quantize(Decimal('0.01'))),
+                            'categoria_id': ids[nueva_categoria]
+                        }, actual['id'])
+                        st.rerun()
+                    except Exception:
+                        st.error('No se pudieron guardar los cambios.')
+            if eliminar:
+                try:
+                    ejecutar('movimientos', 'delete', identificador=actual['id'])
                     st.rerun()
                 except Exception:
-                    st.error('No se pudieron guardar los cambios.')
-        if eliminar:
-            try:
-                ejecutar('movimientos', 'delete', identificador=actual['id'])
-                st.rerun()
-            except Exception:
-                st.error('No se pudo eliminar el movimiento.')
-    else:
-        st.info('No hay movimientos registrados.')
+                    st.error('No se pudo eliminar el movimiento.')
 
 with tabs[2]:
     st.subheader('Categorías personalizables')
@@ -499,96 +575,3 @@ with tabs[3]:
                 st.info('No hay movimientos nuevos en este extracto.')
         except Exception as exc:
             st.error(f'Error al leer o consultar el extracto: {type(exc).__name__}: {str(exc)[:240]}')
-
-
-with tabs[4]:
-    st.subheader('Clasificación inicial del histórico')
-    st.caption('Trabaja sobre los movimientos existentes: no vuelve a importar extractos ni genera duplicados.')
-    pendientes = [m for m in movimientos if m.get('tipo') in ('gasto', 'ingreso') and not m.get('categoria_id')]
-    st.write(f'Movimientos pendientes de categoría: **{len(pendientes)}**')
-    if pendientes:
-        categorias_por_tipo_h = {t: {c['nombre']: c['id'] for c in categorias if c['tipo'] == t}
-                                 for t in ('gasto', 'ingreso')}
-        ids_a_nombre = {c['id']: c['nombre'] for c in categorias}
-        try:
-            reglas_h = []
-            for inicio in range(0, 100000, 500):
-                lote = (st.session_state.cliente.table('reglas_categorias')
-                        .select('tipo,clave_concepto,categoria_id')
-                        .eq('usuario_id', st.session_state.usuario_id)
-                        .range(inicio, inicio+499).execute().data or [])
-                reglas_h.extend(lote)
-                if len(lote) < 500:
-                    break
-        except Exception:
-            reglas_h = []
-            st.warning('No se pudieron leer las reglas aprendidas. Se usarán las reglas generales.')
-        mapa_reglas_h = {(r['tipo'], r['clave_concepto']): ids_a_nombre.get(r['categoria_id'])
-                        for r in reglas_h}
-        # Mantener el tamaño de la tabla razonable y permitir procesar el histórico por lotes.
-        tamano = st.selectbox('Movimientos por lote', [100, 250, 500], index=1)
-        paginas = (len(pendientes) + tamano - 1) // tamano
-        pagina = st.number_input('Lote', min_value=1, max_value=paginas, value=1, step=1)
-        lote_h = pendientes[(pagina-1)*tamano:pagina*tamano]
-        sugerencias_h = []
-        for m in lote_h:
-            aprendida = mapa_reglas_h.get((m['tipo'], clave_aprendizaje(m['concepto'])))
-            propuesta, revision = ((aprendida, 'Aprendida') if aprendida
-                                  else sugerir_categoria(m['concepto'], m['tipo']))
-            if propuesta not in categorias_por_tipo_h[m['tipo']]:
-                propuesta, revision = 'Sin categoría', 'Revisar: categoría no creada'
-            sugerencias_h.append((propuesta, revision))
-        df_h = pd.DataFrame([{
-            'Guardar': True, 'Fecha': m['fecha'], 'Concepto': m['concepto'],
-            'Importe (€)': float(m['importe']), 'Tipo': m['tipo'],
-            'Categoría': sugerencias_h[i][0], 'Revisión': sugerencias_h[i][1]
-        } for i, m in enumerate(lote_h)])
-        opciones_h = ['Sin categoría'] + sorted({c['nombre'] for c in categorias})
-        editado_h = st.data_editor(
-            df_h, hide_index=True, use_container_width=True,
-            disabled=['Fecha', 'Concepto', 'Importe (€)', 'Tipo', 'Revisión'],
-            column_config={'Categoría': st.column_config.SelectboxColumn(
-                'Categoría', options=opciones_h, required=True)},
-            key=f'historico_{pagina}_{len(pendientes)}')
-        st.caption('Las filas marcadas «Revisar» necesitan especial atención. Puedes desmarcar «Guardar» para dejarlas pendientes.')
-        if st.button('Guardar categorías revisadas de este lote', type='primary'):
-            cambios = []
-            reglas_nuevas_h = {}
-            errores = []
-            for i, fila in editado_h.iterrows():
-                if not bool(fila['Guardar']) or fila['Categoría'] == 'Sin categoría':
-                    continue
-                m = lote_h[i]
-                cat_id = categorias_por_tipo_h[m['tipo']].get(fila['Categoría'])
-                if not cat_id:
-                    errores.append(f"{fila['Categoría']} no es categoría de {m['tipo']}")
-                    continue
-                cambios.append((m['id'], cat_id))
-                clave = clave_aprendizaje(m['concepto'])
-                reglas_nuevas_h[(m['tipo'], clave)] = {
-                    'usuario_id': st.session_state.usuario_id,
-                    'tipo': m['tipo'], 'clave_concepto': clave, 'categoria_id': cat_id}
-            if errores:
-                st.error('Corrige las categorías incompatibles: ' + '; '.join(sorted(set(errores))[:5]))
-            elif not cambios:
-                st.warning('No hay categorías seleccionadas para guardar.')
-            else:
-                try:
-                    for mov_id, cat_id in cambios:
-                        (st.session_state.cliente.table('movimientos')
-                         .update({'categoria_id': cat_id})
-                         .eq('id', mov_id).eq('usuario_id', st.session_state.usuario_id)
-                         .is_('categoria_id', 'null').execute())
-                    try:
-                        if reglas_nuevas_h:
-                            st.session_state.cliente.table('reglas_categorias').upsert(
-                                list(reglas_nuevas_h.values()),
-                                on_conflict='usuario_id,tipo,clave_concepto').execute()
-                    except Exception:
-                        st.warning('Categorías guardadas, pero algunas reglas de aprendizaje no se pudieron guardar.')
-                    st.success(f'Clasificación guardada para {len(cambios)} movimientos.')
-                    st.rerun()
-                except Exception as exc:
-                    st.error('No se pudo terminar de guardar el lote. Vuelve a cargar la página para ver lo pendiente.')
-    else:
-        st.success('Todos los gastos e ingresos del histórico tienen categoría.')
