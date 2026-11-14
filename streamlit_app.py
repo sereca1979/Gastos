@@ -91,7 +91,7 @@ CATEGORIAS_INICIALES = {
     'gasto': ['Alimentación', 'Restaurantes y ocio', 'Vivienda', 'Suministros',
               'Coche y Transportes', 'Salud', 'Ropa y compras',
               'Seguros e impuestos', 'Regalos y donaciones', 'Otros gastos'],
-    'ingreso': ['Nómina', 'Intereses', 'Devoluciones', 'Otros ingresos', 'Dani']
+    'ingreso': ['Nómina', 'Intereses', 'Devoluciones', 'Otros ingresos', 'Dani', 'Restaurantes y ocio', 'Regalos y donaciones']
 }
 
 
@@ -173,6 +173,30 @@ except Exception:
     st.stop()
 
 nombres_categorias = {c['id']: c['nombre'] for c in categorias}
+CATEGORIAS_COMPENSACION = {'Restaurantes y ocio', 'Regalos y donaciones'}
+
+def es_excluido(m):
+    return bool(m.get('excluir_balance', False))
+
+def categoria_movimiento(m):
+    return nombres_categorias.get(m.get('categoria_id'), 'Sin categoría')
+
+def importes_balance(registros):
+    ingresos = Decimal('0')
+    gastos = Decimal('0')
+    for m in registros:
+        if es_excluido(m) or m['tipo'] not in ('gasto', 'ingreso'):
+            continue
+        valor = Decimal(str(m['importe']))
+        if m['tipo'] == 'ingreso' and categoria_movimiento(m) in CATEGORIAS_COMPENSACION:
+            gastos -= valor
+        elif m['tipo'] == 'ingreso':
+            ingresos += valor
+        else:
+            gastos += valor
+    return ingresos, gastos
+
+
 st.info('Histórico visible desde el 1 de septiembre de 2026. Los datos anteriores siguen conservados en Supabase.')
 tabs = st.tabs(['Resumen', 'Movimientos', 'Categorías', 'Importar extractos'])
 
@@ -199,8 +223,7 @@ with tabs[0]:
     meses = sorted({str(m['fecha'])[:7] for m in movimientos} | {hoy.strftime('%Y-%m')}, reverse=True)
     mes = st.selectbox('Mes', meses)
     seleccion = [m for m in movimientos if str(m['fecha']).startswith(mes)]
-    ingresos = sum(Decimal(str(m['importe'])) for m in seleccion if m['tipo'] == 'ingreso')
-    gastos = sum(Decimal(str(m['importe'])) for m in seleccion if m['tipo'] == 'gasto')
+    ingresos, gastos = importes_balance(seleccion)
     a, b, c = st.columns(3)
     a.markdown(indicador_financiero('Ingresos', ingresos, 'ingresos'), unsafe_allow_html=True)
     b.markdown(indicador_financiero('Gastos', gastos, 'gastos'), unsafe_allow_html=True)
@@ -208,9 +231,13 @@ with tabs[0]:
     def mostrar_quesito(periodo, clave):
         por_categoria = {}
         for m in movimientos:
-            if m['tipo'] == 'gasto' and str(m['fecha']).startswith(periodo):
-                nombre = nombres_categorias.get(m.get('categoria_id'), 'Sin categoría')
+            if es_excluido(m) or not str(m['fecha']).startswith(periodo):
+                continue
+            nombre = categoria_movimiento(m)
+            if m['tipo'] == 'gasto':
                 por_categoria[nombre] = por_categoria.get(nombre, 0) + float(m['importe'])
+            elif m['tipo'] == 'ingreso' and nombre in CATEGORIAS_COMPENSACION:
+                por_categoria[nombre] = por_categoria.get(nombre, 0) - float(m['importe'])
         if not por_categoria:
             st.info('No hay gastos registrados en este periodo.')
             return
@@ -331,8 +358,8 @@ with tabs[0]:
     filas_ano = []
     for numero_mes in range(1, 13):
         del_mes = [m for m in movimientos if str(m['fecha']).startswith(f'{ano}-{numero_mes:02d}')]
-        i = sum(float(m['importe']) for m in del_mes if m['tipo'] == 'ingreso')
-        g = sum(float(m['importe']) for m in del_mes if m['tipo'] == 'gasto')
+        i, g = importes_balance(del_mes)
+        i, g = float(i), float(g)
         filas_ano.append({'Mes': ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'][numero_mes-1],
                          'Ingresos': i, 'Gastos': g, 'Ahorro': i-g})
     anual = pd.DataFrame(filas_ano)
@@ -487,6 +514,7 @@ with tabs[1]:
             filas = pd.DataFrame([{
                 'Fecha': lote_tabla[i]['fecha'], 'Concepto': lote_tabla[i]['concepto'],
                 'Importe (€)': float(lote_tabla[i]['importe']),
+                'Excluir del balance': bool(lote_tabla[i].get('excluir_balance', False)),
                 'Categoría': nombres_categorias.get(lote_tabla[i].get('categoria_id'), 'Sin categoría')
             } for i in indices])
             editado = st.data_editor(
@@ -500,17 +528,20 @@ with tabs[1]:
                 m = lote_tabla[indices[j]]
                 nuevo = fila['Categoría']
                 anterior = nombres_categorias.get(m.get('categoria_id'), 'Sin categoría')
-                if nuevo != anterior:
+                nueva_exclusion = bool(fila['Excluir del balance'])
+                if nuevo != anterior or nueva_exclusion != es_excluido(m):
                     cambios_por_guardar.append((m, None if nuevo == 'Sin categoría'
-                                                else mapa_tipo.get((tipo_tabla, nuevo))))
+                                                else mapa_tipo.get((tipo_tabla, nuevo)),
+                                                nueva_exclusion))
         if st.button('Guardar categorías', type='primary'):
             if not cambios_por_guardar:
                 st.info('No hay categorías modificadas.')
             else:
                 try:
                     reglas_nuevas = {}
-                    for m, cat_id in cambios_por_guardar:
-                        ejecutar('movimientos', 'update', {'categoria_id': cat_id}, m['id'])
+                    for m, cat_id, excluir in cambios_por_guardar:
+                        ejecutar('movimientos', 'update',
+                                 {'categoria_id': cat_id, 'excluir_balance': excluir}, m['id'])
                         if cat_id and m['tipo'] in ('gasto', 'ingreso'):
                             clave = clave_aprendizaje(m['concepto'])
                             reglas_nuevas[(m['tipo'], clave)] = {
@@ -571,6 +602,21 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader('Categorías personalizables')
+    if st.button('Crear categorías de ingresos compensatorios'):
+        try:
+            existentes = {(c['tipo'], c['nombre']) for c in categorias}
+            pendientes = [
+                {'usuario_id': st.session_state.usuario_id, 'tipo': 'ingreso', 'nombre': nombre}
+                for nombre in sorted(CATEGORIAS_COMPENSACION)
+                if ('ingreso', nombre) not in existentes
+            ]
+            if pendientes:
+                st.session_state.cliente.table('categorias').insert(pendientes).execute()
+            st.success('Categorías de ingresos compensatorios disponibles.')
+            st.rerun()
+        except Exception as exc:
+            st.error(f'No se pudieron crear las categorías: {exc}')
+
     st.caption('Los cambios de categorías no eliminan movimientos existentes.')
     if st.button('Aplicar cambios: Coche y Transportes + Dani ingreso'):
         try:
@@ -709,6 +755,7 @@ with tabs[3]:
                     'Fecha': m['fecha'], 'Banco': m['banco'],
                     'Concepto': m['concepto'], 'Importe (€)': float(m['importe']),
                     'Tipo': m['tipo'],
+                    'Excluir del balance': False,
                     'Categoría': sugerencias[i][0] if sugerencias[i][0] in categorias_por_tipo.get(m['tipo'], {}) else 'Sin categoría',
                     'Revisión': sugerencias[i][1], 'Aviso': m['observacion']
                 } for i, m in enumerate(nuevos)])
@@ -753,7 +800,8 @@ with tabs[3]:
                             'fecha': m['fecha'], 'concepto': m['concepto'],
                             'importe': str(m['importe']), 'tipo': fila['Tipo'],
                             'origen': 'importacion', 'banco_origen': m['banco'],
-                            'huella_importacion': m['huella'], 'categoria_id': categoria_id
+                            'huella_importacion': m['huella'], 'categoria_id': categoria_id,
+                            'excluir_balance': bool(fila['Excluir del balance'])
                         })
                     if elegidos is None:
                         pass
