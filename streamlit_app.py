@@ -159,6 +159,23 @@ except Exception:
 nombres_categorias = {c['id']: c['nombre'] for c in categorias}
 tabs = st.tabs(['Resumen', 'Movimientos', 'Categorías', 'Importar extractos', 'Clasificar histórico'])
 
+def indicador_financiero(titulo, valor, tipo):
+    """Indicador con etiqueta discreta y cifra destacada por signo económico."""
+    valor = Decimal(str(valor))
+    # Gastos son salidas de dinero aunque se almacenen como importes positivos.
+    favorable = (valor >= 0) if tipo != 'gastos' else False
+    color = '#35bd86' if favorable else '#ef7373'
+    return f"""<div class=\"indicador-financiero\">
+        <div class=\"indicador-titulo\">{titulo}</div>
+        <div class=\"indicador-valor\" style=\"color:{color}\">{dinero(valor)}</div>
+    </div>"""
+
+st.markdown("""<style>
+.indicador-financiero {padding: .25rem 0 .7rem 0;}
+.indicador-titulo {font-size: .92rem; font-weight: 500; color: #a7a9af; margin-bottom: .4rem;}
+.indicador-valor {font-size: clamp(1.55rem, 2.3vw, 2.15rem); font-weight: 650; line-height: 1.2;}
+</style>""", unsafe_allow_html=True)
+
 with tabs[0]:
     st.subheader('Resumen mensual')
     hoy = date.today()
@@ -168,9 +185,9 @@ with tabs[0]:
     ingresos = sum(Decimal(str(m['importe'])) for m in seleccion if m['tipo'] == 'ingreso')
     gastos = sum(Decimal(str(m['importe'])) for m in seleccion if m['tipo'] == 'gasto')
     a, b, c = st.columns(3)
-    a.metric('Ingresos', dinero(ingresos))
-    b.metric('Gastos', dinero(gastos))
-    c.metric('Ahorro', dinero(ingresos - gastos))
+    a.markdown(indicador_financiero('Ingresos', ingresos, 'ingresos'), unsafe_allow_html=True)
+    b.markdown(indicador_financiero('Gastos', gastos, 'gastos'), unsafe_allow_html=True)
+    c.markdown(indicador_financiero('Ahorro', ingresos - gastos, 'ahorro'), unsafe_allow_html=True)
     st.subheader('Evolución anual')
     anos = sorted({int(str(m['fecha'])[:4]) for m in movimientos} | {hoy.year}, reverse=True)
     ano = st.selectbox('Año', anos, key='ano_resumen')
@@ -184,9 +201,9 @@ with tabs[0]:
     anual = pd.DataFrame(filas_ano)
     st.markdown(f'### Totales de {ano}')
     total_ingresos, total_gastos, total_ahorro = st.columns(3)
-    total_ingresos.metric('Ingresos anuales', dinero(anual['Ingresos'].sum()))
-    total_gastos.metric('Gastos anuales', dinero(anual['Gastos'].sum()))
-    total_ahorro.metric('Ahorro anual', dinero(anual['Ahorro'].sum()))
+    total_ingresos.markdown(indicador_financiero('Ingresos anuales', anual['Ingresos'].sum(), 'ingresos'), unsafe_allow_html=True)
+    total_gastos.markdown(indicador_financiero('Gastos anuales', anual['Gastos'].sum(), 'gastos'), unsafe_allow_html=True)
+    total_ahorro.markdown(indicador_financiero('Ahorro anual', anual['Ahorro'].sum(), 'ahorro'), unsafe_allow_html=True)
 
     orden_meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
     # Etiquetas en formato español: punto de miles y sin decimales.
