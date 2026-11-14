@@ -243,19 +243,26 @@ with tabs[0]:
     st.altair_chart(graficas, use_container_width=True)
     st.caption(f"Total {ano}: ingresos {dinero(anual['Ingresos'].sum())} · gastos {dinero(anual['Gastos'].sum())} · ahorro {dinero(anual['Ahorro'].sum())}")
     st.subheader('Gastos por categoría')
-    mes_categoria = st.selectbox(
-        'Mes para el desglose',
-        meses,
-        format_func=lambda v: f"{['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][int(v[-2:])-1]} {v[:4]}",
-        key='mes_gastos_categoria'
-    )
+    periodos = ['Mensual', 'Anual']
+    periodo_categoria = st.radio('Periodo del desglose', periodos, horizontal=True,
+                                 key='periodo_gastos_categoria')
+    if periodo_categoria == 'Mensual':
+        periodo_elegido = st.selectbox(
+            'Mes', meses,
+            format_func=lambda v: f"{['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][int(v[-2:])-1]} {v[:4]}",
+            key='mes_gastos_categoria')
+    else:
+        anios_categoria = sorted({str(m['fecha'])[:4] for m in movimientos}, reverse=True)
+        periodo_elegido = st.selectbox('Año', anios_categoria, key='anio_gastos_categoria')
+
     por_categoria = {}
     for m in movimientos:
-        if m['tipo'] == 'gasto' and str(m['fecha']).startswith(mes_categoria):
+        if m['tipo'] == 'gasto' and str(m['fecha']).startswith(periodo_elegido):
             nombre = nombres_categorias.get(m.get('categoria_id'), 'Sin categoría')
             por_categoria[nombre] = por_categoria.get(nombre, 0) + float(m['importe'])
     if por_categoria:
-        datos_pie = pd.DataFrame([{'Categoría': k, 'Importe': v} for k,v in por_categoria.items()])
+        datos_pie = pd.DataFrame([{'Categoría': k, 'Importe': v}
+                                  for k, v in por_categoria.items()])
         total_pie = datos_pie['Importe'].sum()
         sectores = alt.Chart(datos_pie).mark_arc(innerRadius=85, outerRadius=155).encode(
             theta=alt.Theta('Importe:Q', stack=True),
@@ -264,13 +271,13 @@ with tabs[0]:
                      alt.Tooltip('Porcentaje:Q', format='.1f', title='%')]
         ).transform_calculate(Porcentaje=f'100 * datum.Importe / {total_pie}')
         centro = alt.Chart(pd.DataFrame([{'texto': dinero(total_pie)}])).mark_text(
-            fontSize=21, fontWeight='bold'
+            fontSize=21, fontWeight='bold', color='#FFFFFF', align='center', baseline='middle'
         ).encode(text='texto:N')
         st.altair_chart((sectores + centro).properties(height=340).configure_view(stroke=None),
                         use_container_width=True)
-        st.caption(f'Total de gastos del mes: **{dinero(total_pie)}**')
+        st.caption(f'Total de gastos del periodo: **{dinero(total_pie)}**')
     else:
-        st.info('No hay gastos registrados en el mes seleccionado.')
+        st.info('No hay gastos registrados en el periodo seleccionado.')
 
 with tabs[1]:
     st.subheader('Nuevo movimiento')
