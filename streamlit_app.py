@@ -175,11 +175,12 @@ with tabs[0]:
     datos_grafica['Etiqueta'] = datos_grafica['Importe'].map(etiqueta_euros)
     base = alt.Chart(datos_grafica).encode(
         x=alt.X('Mes:N', sort=orden_meses, title=None,
-                axis=alt.Axis(labelAngle=0, domain=False, ticks=False)),
+                axis=alt.Axis(labelAngle=0, domain=False, ticks=False),
+                scale=alt.Scale(paddingInner=0.12, paddingOuter=0.06)),
         xOffset=alt.XOffset('Tipo:N', sort=['Ingresos', 'Gastos'],
                             scale=alt.Scale(paddingInner=0, paddingOuter=0)),
         y=alt.Y('Importe:Q', title='Euros',
-                axis=alt.Axis(grid=False, domain=False, tickCount=5, format=',.0f', labelLimit=75)),
+                axis=alt.Axis(grid=False, domain=False, tickCount=5, format=',.0f', labelLimit=75, minExtent=85, maxExtent=85)),
         color=alt.Color('Tipo:N', sort=['Ingresos', 'Gastos'], title=None,
                         scale=alt.Scale(domain=['Ingresos', 'Gastos'], range=['#0875d1', '#82c8fa'])),
         tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Tipo:N'),
@@ -198,9 +199,10 @@ with tabs[0]:
     ahorro_datos['Etiqueta'] = ahorro_datos['Ahorro'].map(etiqueta_euros)
     ahorro_base = alt.Chart(ahorro_datos).encode(
         x=alt.X('Mes:N', sort=orden_meses, title=None,
-                axis=alt.Axis(labelAngle=0, domain=False, ticks=False)),
+                axis=alt.Axis(labelAngle=0, domain=False, ticks=False),
+                scale=alt.Scale(paddingInner=0.12, paddingOuter=0.06)),
         y=alt.Y('Ahorro:Q', title='Euros',
-                axis=alt.Axis(grid=False, domain=False, format=',.0f', labelLimit=75)),
+                axis=alt.Axis(grid=False, domain=False, format=',.0f', labelLimit=75, minExtent=85, maxExtent=85)),
         color=alt.condition('datum.Ahorro >= 0', alt.value('#188b73'), alt.value('#d65b62')),
         tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Etiqueta:N', title='Ahorro')]
     )
