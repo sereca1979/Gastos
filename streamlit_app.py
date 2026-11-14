@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
+import re
+import unicodedata
 from datetime import date
 from decimal import Decimal
 from supabase import create_client
@@ -69,6 +71,13 @@ CATEGORIAS_INICIALES = {
               'Seguros e impuestos', 'Regalos y donaciones', 'Otros gastos'],
     'ingreso': ['Nómina', 'Intereses', 'Devoluciones', 'Otros ingresos']
 }
+
+
+def clave_aprendizaje(concepto):
+    """Coincidencia conservadora por concepto normalizado, sin datos personales externos."""
+    texto = unicodedata.normalize('NFKD', str(concepto).upper())
+    texto = ''.join(c for c in texto if not unicodedata.combining(c))
+    return re.sub(r'\s+', ' ', texto).strip()[:400]
 
 
 def sugerir_categoria(concepto, tipo, aviso=''):
@@ -397,7 +406,16 @@ with tabs[3]:
             if nuevos:
                 categorias_por_tipo = {tipo: {c['nombre']: c['id'] for c in categorias if c['tipo'] == tipo}
                                        for tipo in ('gasto', 'ingreso')}
-                sugerencias = [sugerir_categoria(m['concepto'], m['tipo'], m['observacion']) for m in nuevos]
+                reglas_guardadas = st.session_state.cliente.table('reglas_categorias').select(
+                    'tipo,clave_concepto,categoria_id').eq('usuario_id', st.session_state.usuario_id).execute().data or []
+                nombres_por_id = {c['id']: c['nombre'] for c in categorias}
+                reglas = {(r['tipo'], r['clave_concepto']): nombres_por_id.get(r['categoria_id'])
+                          for r in reglas_guardadas}
+                sugerencias = []
+                for m in nuevos:
+                    base = sugerir_categoria(m['concepto'], m['tipo'], m['observacion'])
+                    aprendida = reglas.get((m['tipo'], clave_aprendizaje(m['concepto'])))
+                    sugerencias.append((aprendida, 'Aprendida') if aprendida else base)
                 filas = pd.DataFrame([{
                     'Incluir': (True if 'BIZUM' in str(m['concepto']).upper() else m['incluir']),
                     'Fecha': m['fecha'], 'Banco': m['banco'],
@@ -445,6 +463,26 @@ with tabs[3]:
                                 st.session_state.cliente.table('movimientos').upsert(
                                     elegidos[inicio:inicio+100], on_conflict='usuario_id,huella_importacion',
                                     ignore_duplicates=True).execute()
+                            # Aprender únicamente de filas confirmadas y categorías válidas.
+                            reglas_nuevas = {}
+                            for i, fila in revisado.iterrows():
+                                if not bool(fila['Incluir']) or fila['Tipo'] not in ('gasto', 'ingreso'):
+                                    continue
+                                categoria_id = categorias_por_tipo.get(fila['Tipo'], {}).get(fila['Categoría'])
+                                if categoria_id:
+                                    clave = clave_aprendizaje(nuevos[i]['concepto'])
+                                    reglas_nuevas[(fila['Tipo'], clave)] = {
+                                        'usuario_id': st.session_state.usuario_id,
+                                        'tipo': fila['Tipo'], 'clave_concepto': clave,
+                                        'categoria_id': categoria_id
+                                    }
+                            if reglas_nuevas:
+                                try:
+                                    st.session_state.cliente.table('reglas_categorias').upsert(
+                                        list(reglas_nuevas.values()),
+                                        on_conflict='usuario_id,tipo,clave_concepto').execute()
+                                except Exception:
+                                    st.warning('Movimientos guardados, pero no se pudieron guardar las reglas de aprendizaje.')
                             st.success(f'Importación completada. Seleccionados: {len(elegidos)}. Los duplicados se omiten.')
                             st.rerun()
                         except Exception as exc:
