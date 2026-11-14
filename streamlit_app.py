@@ -189,7 +189,7 @@ with tabs[0]:
     base = alt.Chart(datos_grafica).encode(
         x=alt.X('Posicion:Q', scale=escala_meses, axis=eje_meses),
         y=alt.Y('Importe:Q', title='Euros', axis=eje_importes),
-        color=alt.Color('Tipo:N', sort=['Ingresos', 'Gastos'], title=None,
+        color=alt.Color('Tipo:N', sort=['Ingresos', 'Gastos'], title=None, legend=None,
                         scale=alt.Scale(domain=['Ingresos', 'Gastos'], range=['#0875d1', '#82c8fa'])),
         tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Tipo:N'),
                  alt.Tooltip('Etiqueta:N', title='Importe')]
@@ -198,11 +198,11 @@ with tabs[0]:
     etiquetas = base.transform_filter('datum.Importe > 0').mark_text(
         dy=-9, fontSize=11, color='#aebbd0'
     ).encode(text=alt.Text('Etiqueta:N'))
-    st.altair_chart((barras + etiquetas).properties(height=360).configure_view(stroke=None),
-                    use_container_width=True)
-    st.caption(f"Total {ano}: ingresos {dinero(anual['Ingresos'].sum())} · gastos {dinero(anual['Gastos'].sum())} · ahorro {dinero(anual['Ahorro'].sum())}")
+    grafica_ingresos_gastos = (barras + etiquetas).properties(height=360, title='Ingresos y gastos')
+    # Ambas gráficas se dibujan dentro de un único gráfico concatenado.
+    # Vega-Lite comparte así exactamente el área horizontal y la escala X.
 
-    st.subheader('Ahorro mensual')
+
     ahorro_datos = anual[['Mes', 'NumeroMes', 'Ahorro']].copy()
     ahorro_datos['Etiqueta'] = ahorro_datos['Ahorro'].map(etiqueta_euros)
     ahorro_base = alt.Chart(ahorro_datos).encode(
@@ -218,9 +218,13 @@ with tabs[0]:
     ahorro_etiquetas_neg = ahorro_base.transform_filter('datum.Ahorro < 0').mark_text(
         dy=13, fontSize=11, color='#aebbd0'
     ).encode(text=alt.Text('Etiqueta:N'))
-    st.altair_chart((ahorro_barras + ahorro_etiquetas_pos + ahorro_etiquetas_neg)
-                    .properties(height=290).configure_view(stroke=None),
-                    use_container_width=True)
+    grafica_ahorro = (ahorro_barras + ahorro_etiquetas_pos + ahorro_etiquetas_neg).properties(
+        height=290, title='Ahorro mensual')
+    graficas = alt.vconcat(grafica_ingresos_gastos, grafica_ahorro, spacing=35).resolve_scale(
+        x='shared', y='independent', color='independent'
+    ).configure_view(stroke=None)
+    st.altair_chart(graficas, use_container_width=True)
+    st.caption(f"Total {ano}: ingresos {dinero(anual['Ingresos'].sum())} · gastos {dinero(anual['Gastos'].sum())} · ahorro {dinero(anual['Ahorro'].sum())}")
     if seleccion:
         por_categoria = {}
         for m in seleccion:
