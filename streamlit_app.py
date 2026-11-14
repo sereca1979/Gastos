@@ -166,11 +166,15 @@ with st.sidebar:
 try:
     categorias = consultar('categorias', orden='nombre')
     movimientos = consultar('movimientos', orden='fecha')
+    # Corte de visualización: no borra registros anteriores en Supabase.
+    FECHA_INICIO = '2026-09-01'
+    movimientos = [m for m in movimientos if str(m.get('fecha', ''))[:10] >= FECHA_INICIO]
 except Exception:
     st.error('No se pueden consultar los datos. Comprueba la conexión y las políticas RLS de Supabase.')
     st.stop()
 
 nombres_categorias = {c['id']: c['nombre'] for c in categorias}
+st.info('Histórico visible desde el 1 de septiembre de 2026. Los datos anteriores siguen conservados en Supabase.')
 tabs = st.tabs(['Resumen', 'Movimientos', 'Categorías', 'Importar extractos'])
 
 def indicador_financiero(titulo, valor, tipo):
@@ -631,7 +635,7 @@ with tabs[2]:
 
 with tabs[3]:
     st.subheader('Importar extractos bancarios')
-    st.caption('Revisa los movimientos antes de guardarlos. Las transferencias dudosas y operaciones de inversión se excluyen por defecto.')
+    st.caption('Se importan únicamente movimientos desde el 01/09/2026. Los anteriores permanecen guardados, pero ocultos. Las transferencias dudosas y operaciones de inversión se excluyen por defecto.')
     banco = st.selectbox('Banco', ['Ibercaja', 'Trade Republic'])
     archivo = st.file_uploader('Extracto', type=['xlsx'] if banco == 'Ibercaja' else ['pdf'], key='extracto')
     if archivo is not None:
@@ -641,6 +645,8 @@ with tabs[3]:
             if st.session_state.get('firma_archivo') != firma_archivo:
                 leidos = ibercaja(datos) if banco == 'Ibercaja' else trade_republic(datos)
                 leidos = huellas(leidos)
+                # Excluir de la importación cualquier movimiento previo al corte.
+                leidos = [m for m in leidos if str(m.get('fecha', ''))[:10] >= '2026-09-01']
                 st.session_state.firma_archivo = firma_archivo
                 st.session_state.movimientos_importar = leidos
             leidos = st.session_state.movimientos_importar
