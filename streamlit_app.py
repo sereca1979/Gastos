@@ -170,23 +170,31 @@ with tabs[0]:
     def etiqueta_euros(valor):
         return f"{valor:,.0f}".replace(',', '.') + ' €'
 
-    datos_grafica = anual.melt(id_vars='Mes', value_vars=['Ingresos', 'Gastos'],
+    # Posiciones numéricas compartidas: evita desplazamientos por xOffset y leyendas.
+    anual['NumeroMes'] = range(1, 13)
+    eje_meses = alt.Axis(
+        values=list(range(1, 13)),
+        labelExpr="['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][datum.value - 1]",
+        labelAngle=0, domain=False, ticks=False, title=None,
+    )
+    escala_meses = alt.Scale(domain=[0.5, 12.5], nice=False, zero=False)
+    eje_importes = alt.Axis(grid=False, domain=False, format=',.0f',
+                           labelLimit=75, minExtent=85, maxExtent=85)
+    datos_grafica = anual.melt(id_vars=['Mes', 'NumeroMes'],
+                               value_vars=['Ingresos', 'Gastos'],
                                var_name='Tipo', value_name='Importe')
+    datos_grafica['Posicion'] = datos_grafica['NumeroMes'] + datos_grafica['Tipo'].map(
+        {'Ingresos': -0.19, 'Gastos': 0.19})
     datos_grafica['Etiqueta'] = datos_grafica['Importe'].map(etiqueta_euros)
     base = alt.Chart(datos_grafica).encode(
-        x=alt.X('Mes:N', sort=orden_meses, title=None,
-                axis=alt.Axis(labelAngle=0, domain=False, ticks=False),
-                scale=alt.Scale(paddingInner=0.12, paddingOuter=0.06)),
-        xOffset=alt.XOffset('Tipo:N', sort=['Ingresos', 'Gastos'],
-                            scale=alt.Scale(paddingInner=0, paddingOuter=0)),
-        y=alt.Y('Importe:Q', title='Euros',
-                axis=alt.Axis(grid=False, domain=False, tickCount=5, format=',.0f', labelLimit=75, minExtent=85, maxExtent=85)),
+        x=alt.X('Posicion:Q', scale=escala_meses, axis=eje_meses),
+        y=alt.Y('Importe:Q', title='Euros', axis=eje_importes),
         color=alt.Color('Tipo:N', sort=['Ingresos', 'Gastos'], title=None,
                         scale=alt.Scale(domain=['Ingresos', 'Gastos'], range=['#0875d1', '#82c8fa'])),
         tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Tipo:N'),
                  alt.Tooltip('Etiqueta:N', title='Importe')]
     )
-    barras = base.mark_bar(size=38)
+    barras = base.mark_bar(size=32)
     etiquetas = base.transform_filter('datum.Importe > 0').mark_text(
         dy=-9, fontSize=11, color='#aebbd0'
     ).encode(text=alt.Text('Etiqueta:N'))
@@ -195,18 +203,15 @@ with tabs[0]:
     st.caption(f"Total {ano}: ingresos {dinero(anual['Ingresos'].sum())} · gastos {dinero(anual['Gastos'].sum())} · ahorro {dinero(anual['Ahorro'].sum())}")
 
     st.subheader('Ahorro mensual')
-    ahorro_datos = anual[['Mes', 'Ahorro']].copy()
+    ahorro_datos = anual[['Mes', 'NumeroMes', 'Ahorro']].copy()
     ahorro_datos['Etiqueta'] = ahorro_datos['Ahorro'].map(etiqueta_euros)
     ahorro_base = alt.Chart(ahorro_datos).encode(
-        x=alt.X('Mes:N', sort=orden_meses, title=None,
-                axis=alt.Axis(labelAngle=0, domain=False, ticks=False),
-                scale=alt.Scale(paddingInner=0.12, paddingOuter=0.06)),
-        y=alt.Y('Ahorro:Q', title='Euros',
-                axis=alt.Axis(grid=False, domain=False, format=',.0f', labelLimit=75, minExtent=85, maxExtent=85)),
+        x=alt.X('NumeroMes:Q', scale=escala_meses, axis=eje_meses),
+        y=alt.Y('Ahorro:Q', title='Euros', axis=eje_importes),
         color=alt.condition('datum.Ahorro >= 0', alt.value('#188b73'), alt.value('#d65b62')),
         tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Etiqueta:N', title='Ahorro')]
     )
-    ahorro_barras = ahorro_base.mark_bar(size=76)
+    ahorro_barras = ahorro_base.mark_bar(size=65)
     ahorro_etiquetas_pos = ahorro_base.transform_filter('datum.Ahorro > 0').mark_text(
         dy=-9, fontSize=11, color='#aebbd0'
     ).encode(text=alt.Text('Etiqueta:N'))
