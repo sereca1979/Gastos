@@ -257,7 +257,10 @@ with tabs[0]:
                 f'<rect x="790" y="{85 + indice*29}" width="13" height="13" '
                 f'rx="3" fill="{color}"/>'
                 f'<text x="813" y="{96 + indice*29}" fill="#E5E7EB" '
-                f'font-size="15">{escape(nombre)}</text>')
+                f'font-size="15">{escape(nombre)}</text>'
+                f'<text x="1040" y="{96 + indice*29}" fill="#E5E7EB" '
+                f'font-size="18" text-anchor="middle">'
+                f'{escape(iconos.get(nombre, "📌"))}</text>')
             angulo = fin
 
         # Evitar solapamiento vertical entre llamadas próximas.
