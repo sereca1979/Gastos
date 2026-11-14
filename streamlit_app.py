@@ -47,6 +47,14 @@ def consultar(tabla, columnas='*', orden=None):
     q = st.session_state.cliente.table(tabla).select(columnas)
     if orden:
         q = q.order(orden, desc=True)
+    if tabla == 'movimientos':
+        todos = []
+        for inicio in range(0, 100000, 500):
+            lote = q.range(inicio, inicio + 499).execute().data or []
+            todos.extend(lote)
+            if len(lote) < 500:
+                break
+        return todos
     return q.execute().data or []
 
 
@@ -149,7 +157,7 @@ except Exception:
     st.stop()
 
 nombres_categorias = {c['id']: c['nombre'] for c in categorias}
-tabs = st.tabs(['Resumen', 'Movimientos', 'Categorías', 'Importar extractos'])
+tabs = st.tabs(['Resumen', 'Movimientos', 'Categorías', 'Importar extractos', 'Clasificar histórico'])
 
 with tabs[0]:
     st.subheader('Resumen mensual')
@@ -491,3 +499,96 @@ with tabs[3]:
                 st.info('No hay movimientos nuevos en este extracto.')
         except Exception as exc:
             st.error(f'Error al leer o consultar el extracto: {type(exc).__name__}: {str(exc)[:240]}')
+
+
+with tabs[4]:
+    st.subheader('Clasificación inicial del histórico')
+    st.caption('Trabaja sobre los movimientos existentes: no vuelve a importar extractos ni genera duplicados.')
+    pendientes = [m for m in movimientos if m.get('tipo') in ('gasto', 'ingreso') and not m.get('categoria_id')]
+    st.write(f'Movimientos pendientes de categoría: **{len(pendientes)}**')
+    if pendientes:
+        categorias_por_tipo_h = {t: {c['nombre']: c['id'] for c in categorias if c['tipo'] == t}
+                                 for t in ('gasto', 'ingreso')}
+        ids_a_nombre = {c['id']: c['nombre'] for c in categorias}
+        try:
+            reglas_h = []
+            for inicio in range(0, 100000, 500):
+                lote = (st.session_state.cliente.table('reglas_categorias')
+                        .select('tipo,clave_concepto,categoria_id')
+                        .eq('usuario_id', st.session_state.usuario_id)
+                        .range(inicio, inicio+499).execute().data or [])
+                reglas_h.extend(lote)
+                if len(lote) < 500:
+                    break
+        except Exception:
+            reglas_h = []
+            st.warning('No se pudieron leer las reglas aprendidas. Se usarán las reglas generales.')
+        mapa_reglas_h = {(r['tipo'], r['clave_concepto']): ids_a_nombre.get(r['categoria_id'])
+                        for r in reglas_h}
+        # Mantener el tamaño de la tabla razonable y permitir procesar el histórico por lotes.
+        tamano = st.selectbox('Movimientos por lote', [100, 250, 500], index=1)
+        paginas = (len(pendientes) + tamano - 1) // tamano
+        pagina = st.number_input('Lote', min_value=1, max_value=paginas, value=1, step=1)
+        lote_h = pendientes[(pagina-1)*tamano:pagina*tamano]
+        sugerencias_h = []
+        for m in lote_h:
+            aprendida = mapa_reglas_h.get((m['tipo'], clave_aprendizaje(m['concepto'])))
+            propuesta, revision = ((aprendida, 'Aprendida') if aprendida
+                                  else sugerir_categoria(m['concepto'], m['tipo']))
+            if propuesta not in categorias_por_tipo_h[m['tipo']]:
+                propuesta, revision = 'Sin categoría', 'Revisar: categoría no creada'
+            sugerencias_h.append((propuesta, revision))
+        df_h = pd.DataFrame([{
+            'Guardar': True, 'Fecha': m['fecha'], 'Concepto': m['concepto'],
+            'Importe (€)': float(m['importe']), 'Tipo': m['tipo'],
+            'Categoría': sugerencias_h[i][0], 'Revisión': sugerencias_h[i][1]
+        } for i, m in enumerate(lote_h)])
+        opciones_h = ['Sin categoría'] + sorted({c['nombre'] for c in categorias})
+        editado_h = st.data_editor(
+            df_h, hide_index=True, use_container_width=True,
+            disabled=['Fecha', 'Concepto', 'Importe (€)', 'Tipo', 'Revisión'],
+            column_config={'Categoría': st.column_config.SelectboxColumn(
+                'Categoría', options=opciones_h, required=True)},
+            key=f'historico_{pagina}_{len(pendientes)}')
+        st.caption('Las filas marcadas «Revisar» necesitan especial atención. Puedes desmarcar «Guardar» para dejarlas pendientes.')
+        if st.button('Guardar categorías revisadas de este lote', type='primary'):
+            cambios = []
+            reglas_nuevas_h = {}
+            errores = []
+            for i, fila in editado_h.iterrows():
+                if not bool(fila['Guardar']) or fila['Categoría'] == 'Sin categoría':
+                    continue
+                m = lote_h[i]
+                cat_id = categorias_por_tipo_h[m['tipo']].get(fila['Categoría'])
+                if not cat_id:
+                    errores.append(f"{fila['Categoría']} no es categoría de {m['tipo']}")
+                    continue
+                cambios.append((m['id'], cat_id))
+                clave = clave_aprendizaje(m['concepto'])
+                reglas_nuevas_h[(m['tipo'], clave)] = {
+                    'usuario_id': st.session_state.usuario_id,
+                    'tipo': m['tipo'], 'clave_concepto': clave, 'categoria_id': cat_id}
+            if errores:
+                st.error('Corrige las categorías incompatibles: ' + '; '.join(sorted(set(errores))[:5]))
+            elif not cambios:
+                st.warning('No hay categorías seleccionadas para guardar.')
+            else:
+                try:
+                    for mov_id, cat_id in cambios:
+                        (st.session_state.cliente.table('movimientos')
+                         .update({'categoria_id': cat_id})
+                         .eq('id', mov_id).eq('usuario_id', st.session_state.usuario_id)
+                         .is_('categoria_id', 'null').execute())
+                    try:
+                        if reglas_nuevas_h:
+                            st.session_state.cliente.table('reglas_categorias').upsert(
+                                list(reglas_nuevas_h.values()),
+                                on_conflict='usuario_id,tipo,clave_concepto').execute()
+                    except Exception:
+                        st.warning('Categorías guardadas, pero algunas reglas de aprendizaje no se pudieron guardar.')
+                    st.success(f'Clasificación guardada para {len(cambios)} movimientos.')
+                    st.rerun()
+                except Exception as exc:
+                    st.error('No se pudo terminar de guardar el lote. Vuelve a cargar la página para ver lo pendiente.')
+    else:
+        st.success('Todos los gastos e ingresos del histórico tienen categoría.')
