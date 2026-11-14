@@ -197,20 +197,110 @@ with tabs[0]:
         if not por_categoria:
             st.info('No hay gastos registrados en este periodo.')
             return
+        iconos = {
+            'Alimentación': '🛒', 'Restaurantes y ocio': '🍽️', 'Vivienda': '🏠',
+            'Suministros': '💡', 'Transporte': '🚗', 'Salud': '⚕️',
+            'Ropa y compras': '🛍️', 'Viajes': '✈️',
+            'Seguros e impuestos': '🛡️', 'Regalos y donaciones': '🎁',
+            'Otros gastos': '📦', 'Sin categoría': '❔'
+        }
         datos_pie = pd.DataFrame([{'Categoría': k, 'Importe': v}
-                                  for k, v in por_categoria.items()])
+                                  for k, v in por_categoria.items() if v > 0])
+        datos_pie = datos_pie.sort_values('Importe', ascending=False).reset_index(drop=True)
         total_pie = datos_pie['Importe'].sum()
-        sectores = alt.Chart(datos_pie).mark_arc(innerRadius=85, outerRadius=155).encode(
-            theta=alt.Theta('Importe:Q', stack=True),
-            color=alt.Color('Categoría:N', legend=alt.Legend(title=None, orient='right')),
-            tooltip=['Categoría:N', alt.Tooltip('Importe:Q', title='Gasto (€)', format=',.2f'),
-                     alt.Tooltip('Porcentaje:Q', format='.1f', title='%')]
-        ).transform_calculate(Porcentaje=f'100 * datum.Importe / {total_pie}')
-        centro = alt.Chart(pd.DataFrame([{'texto': dinero(total_pie)}])).mark_text(
-            fontSize=21, fontWeight='bold', color='#FFFFFF', align='center', baseline='middle'
-        ).encode(text='texto:N')
-        st.altair_chart((sectores + centro).properties(height=340).configure_view(stroke=None),
-                        use_container_width=True, key=f'quesito_{clave}')
+        datos_pie['Llamada'] = datos_pie.apply(
+            lambda fila: f"{iconos.get(fila['Categoría'], '📌')} {dinero(fila['Importe'])}", axis=1)
+        # SVG responsive: llamadas con líneas guía, sin recortes de Altair.
+        import math
+        from html import escape
+        import streamlit.components.v1 as components
+
+        paleta = ['#2D76C8', '#78BFFA', '#34A88B', '#F0A75A', '#C86A9C',
+                  '#9D8AE0', '#E17C72', '#7CBF76', '#D9BA52', '#6FADB6',
+                  '#A3A8B0', '#C0A0D8']
+        cx, cy, radio_ext, radio_int = 430, 250, 145, 85
+        angulo = -math.pi / 2
+        sectores_svg = []
+        etiquetas = []
+        leyenda = []
+        for indice, fila in datos_pie.iterrows():
+            nombre = str(fila['Categoría'])
+            importe = float(fila['Importe'])
+            amplitud = 2 * math.pi * importe / total_pie
+            fin = angulo + amplitud
+            color = paleta[indice % len(paleta)]
+            # Arcos de más de media circunferencia necesitan large-arc-flag.
+            def punto(r, theta):
+                return (cx + r * math.cos(theta), cy + r * math.sin(theta))
+            if amplitud >= 2 * math.pi - 0.000001:
+                sectores_svg.append(
+                    f'<circle cx="{cx}" cy="{cy}" r="{radio_ext}" fill="{color}"/>')
+            else:
+                x1,y1 = punto(radio_ext, angulo)
+                x2,y2 = punto(radio_ext, fin)
+                grande = int(amplitud > math.pi)
+                sectores_svg.append(
+                    f'<path d="M {cx} {cy} L {x1:.2f} {y1:.2f} '
+                    f'A {radio_ext} {radio_ext} 0 {grande} 1 {x2:.2f} {y2:.2f} Z" '
+                    f'fill="{color}" stroke="#151515" stroke-width="1.5"/>')
+            medio = angulo + amplitud/2
+            x1,y1 = punto(radio_ext + 3, medio)
+            x2,y2 = punto(radio_ext + 23, medio)
+            derecha = math.cos(medio) >= 0
+            etiquetas.append({
+                'lado': 'derecha' if derecha else 'izquierda',
+                'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                'y_obj': y2, 'texto': f"{iconos.get(nombre, '📌')} {dinero(importe)}",
+                'color': color
+            })
+            leyenda.append(
+                f'<rect x="790" y="{85 + indice*29}" width="13" height="13" '
+                f'rx="3" fill="{color}"/>'
+                f'<text x="813" y="{96 + indice*29}" fill="#E5E7EB" '
+                f'font-size="15">{escape(nombre)}</text>')
+            angulo = fin
+
+        # Evitar solapamiento vertical entre llamadas próximas.
+        for lado in ('izquierda', 'derecha'):
+            items = sorted((e for e in etiquetas if e['lado'] == lado),
+                           key=lambda e: e['y_obj'])
+            separacion = 25
+            anterior = 25 - separacion
+            for e in items:
+                e['y'] = max(e['y_obj'], anterior + separacion, 25)
+                anterior = e['y']
+            if items and items[-1]['y'] > 480:
+                desplazamiento = items[-1]['y'] - 480
+                for e in items:
+                    e['y'] -= desplazamiento
+
+        llamadas_svg = []
+        for e in etiquetas:
+            derecha = e['lado'] == 'derecha'
+            extremo = 660 if derecha else 200
+            ancla = 'start' if derecha else 'end'
+            texto_x = extremo + (7 if derecha else -7)
+            llamadas_svg.append(
+                f'<polyline points="{e["x1"]:.1f},{e["y1"]:.1f} '
+                f'{e["x2"]:.1f},{e["y2"]:.1f} {extremo},{e["y"]:.1f}" '
+                f'fill="none" stroke="{e["color"]}" stroke-width="1.5"/>'
+                f'<text x="{texto_x}" y="{e["y"]+5:.1f}" '
+                f'text-anchor="{ancla}" font-size="15" font-weight="600" '
+                f'fill="#F3F4F6">{escape(e["texto"])}</text>')
+
+        svg = (
+            '<div style="width:100%;overflow-x:auto">'
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 510" '
+            'style="width:100%;max-width:1100px;height:auto;display:block;margin:auto" '
+            'role="img" aria-label="Gastos por categoría con importes">'
+            + ''.join(sectores_svg)
+            + f'<circle cx="{cx}" cy="{cy}" r="{radio_int}" fill="#151515"/>'
+            + f'<text x="{cx}" y="{cy+7}" text-anchor="middle" '
+              f'font-size="23" font-weight="bold" fill="#FFFFFF">{escape(dinero(total_pie))}</text>'
+            + ''.join(llamadas_svg) + ''.join(leyenda)
+            + '</svg></div>'
+        )
+        components.html(svg, height=525, scrolling=False)
         st.caption(f'Total de gastos: **{dinero(total_pie)}**')
 
     st.subheader('Gastos del mes por categoría')
