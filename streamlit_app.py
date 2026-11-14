@@ -10,6 +10,20 @@ from importadores import ibercaja, trade_republic, huellas
 
 st.set_page_config(page_title='Control de gastos', page_icon='📊', layout='wide')
 
+# Streamlit representa ambas versiones, pero CSS muestra solo la adecuada.
+st.markdown('''
+<style>
+@media (max-width: 700px) {
+  .st-key-graficas_escritorio {display:none !important;}
+  .st-key-graficas_movil {display:block !important;}
+  [data-testid="stMainBlockContainer"] {padding-left: 0.7rem; padding-right: 0.7rem;}
+}
+@media (min-width: 701px) {
+  .st-key-graficas_movil {display:none !important;}
+}
+</style>
+''', unsafe_allow_html=True)
+
 
 def nuevo_cliente():
     # Nunca cachear un cliente que contenga una sesión de usuario.
@@ -383,7 +397,43 @@ with tabs[0]:
     graficas = alt.vconcat(grafica_ingresos_gastos, grafica_ahorro, spacing=35).resolve_scale(
         x='shared', y='independent', color='independent'
     ).configure_view(stroke=None)
-    st.altair_chart(graficas, use_container_width=True)
+    with st.container(key='graficas_escritorio'):
+        st.altair_chart(graficas, use_container_width=True)
+
+    # En móviles, los 12 meses no caben como 24 barras con etiquetas.
+    # Usamos líneas para ingresos/gastos y barras para ahorro; valores al tocar.
+    with st.container(key='graficas_movil'):
+        st.caption('Ingresos y gastos por mes · toca un punto para ver el importe')
+        movil = anual.melt(id_vars=['Mes', 'NumeroMes'],
+                           value_vars=['Ingresos', 'Gastos'],
+                           var_name='Tipo', value_name='Importe')
+        movil['Etiqueta'] = movil['Importe'].map(etiqueta_euros)
+        eje_movil = alt.Axis(values=list(range(1, 13)),
+            labelExpr="['E','F','M','A','M','J','J','A','S','O','N','D'][datum.value - 1]",
+            labelAngle=0, title=None, grid=False, domain=False)
+        base_movil = alt.Chart(movil).encode(
+            x=alt.X('NumeroMes:Q', scale=alt.Scale(domain=[0.5,12.5]),
+                    axis=eje_movil),
+            y=alt.Y('Importe:Q', axis=alt.Axis(title=None, grid=True, tickCount=4)),
+            color=alt.Color('Tipo:N', scale=alt.Scale(
+                domain=['Ingresos','Gastos'], range=['#0875d1','#82c8fa']),
+                legend=alt.Legend(orient='bottom', title=None)),
+            tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Tipo:N'),
+                     alt.Tooltip('Etiqueta:N', title='Importe')]
+        )
+        graf_movil = (base_movil.mark_line(strokeWidth=2.5) +
+                      base_movil.mark_point(size=55, filled=True)).properties(height=220)
+        st.altair_chart(graf_movil, use_container_width=True)
+        st.caption('Ahorro mensual · verde positivo, rojo negativo')
+        ahorro_movil = alt.Chart(ahorro_datos).mark_bar(size=15).encode(
+            x=alt.X('NumeroMes:Q', scale=alt.Scale(domain=[0.5,12.5]),
+                    axis=eje_movil),
+            y=alt.Y('Ahorro:Q', axis=alt.Axis(title=None, grid=True, tickCount=4)),
+            color=alt.condition('datum.Ahorro >= 0', alt.value('#188b73'),
+                                alt.value('#d65b62')),
+            tooltip=[alt.Tooltip('Mes:N'), alt.Tooltip('Etiqueta:N', title='Ahorro')]
+        ).properties(height=190)
+        st.altair_chart(ahorro_movil, use_container_width=True)
 
     st.subheader('Gastos del año por categoría')
     mostrar_quesito(str(ano), 'anual')
