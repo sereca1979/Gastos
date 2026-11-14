@@ -182,6 +182,12 @@ with tabs[0]:
         filas_ano.append({'Mes': ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'][numero_mes-1],
                          'Ingresos': i, 'Gastos': g, 'Ahorro': i-g})
     anual = pd.DataFrame(filas_ano)
+    st.markdown(f'### Totales de {ano}')
+    total_ingresos, total_gastos, total_ahorro = st.columns(3)
+    total_ingresos.metric('Ingresos anuales', dinero(anual['Ingresos'].sum()))
+    total_gastos.metric('Gastos anuales', dinero(anual['Gastos'].sum()))
+    total_ahorro.metric('Ahorro anual', dinero(anual['Ahorro'].sum()))
+
     orden_meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
     # Etiquetas en formato español: punto de miles y sin decimales.
     def etiqueta_euros(valor):
@@ -241,7 +247,6 @@ with tabs[0]:
         x='shared', y='independent', color='independent'
     ).configure_view(stroke=None)
     st.altair_chart(graficas, use_container_width=True)
-    st.caption(f"Total {ano}: ingresos {dinero(anual['Ingresos'].sum())} · gastos {dinero(anual['Gastos'].sum())} · ahorro {dinero(anual['Ahorro'].sum())}")
     st.subheader('Gastos por categoría')
     periodos = ['Mensual', 'Anual']
     periodo_categoria = st.radio('Periodo del desglose', periodos, horizontal=True,
