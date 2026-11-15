@@ -8,6 +8,7 @@ import unicodedata
 from datetime import date
 from decimal import Decimal
 from supabase import create_client
+from streamlit_cookies_manager import EncryptedCookieManager
 from importadores import ibercaja, trade_republic, huellas
 
 st.set_page_config(page_title='Control de gastos', page_icon='📊', layout='wide')
@@ -47,7 +48,35 @@ def nuevo_cliente():
     return create_client(st.secrets['SUPABASE_URL'], st.secrets['SUPABASE_KEY'])
 
 
+# La cookie se cifra y firma con una clave privada del servidor. La opción
+# La persistencia se activa automáticamente por navegador tras iniciar sesión.
+COOKIE_PASSWORD = st.secrets.get('COOKIE_PASSWORD', '')
+cookies = None
+if COOKIE_PASSWORD:
+    cookies = EncryptedCookieManager(prefix='gastos_privado_', password=COOKIE_PASSWORD)
+    if not cookies.ready():
+        st.stop()
+
+
+def limpiar_cookie():
+    if cookies is not None and cookies.get('refresh_token'):
+        del cookies['refresh_token']
+        cookies.save()
+
+
+def guardar_cookie_sesion(cliente):
+    if cookies is None:
+        return
+    sesion = cliente.auth.get_session()
+    token = sesion.refresh_token if sesion else None
+    if token and cookies.get('refresh_token') != token:
+        cookies['refresh_token'] = token
+        cookies.save()
+
+
 def cerrar_sesion():
+    # Eliminar primero la cookie local, también si Supabase no responde.
+    limpiar_cookie()
     cliente = st.session_state.get('cliente')
     if cliente:
         try:
@@ -59,6 +88,24 @@ def cerrar_sesion():
     st.rerun()
 
 
+def recuperar_sesion_recordada():
+    if cookies is None or not cookies.get('refresh_token'):
+        return False
+    try:
+        cliente = nuevo_cliente()
+        # Supabase renueva el access token a partir del refresh token guardado.
+        respuesta = cliente.auth.refresh_session(cookies['refresh_token'])
+        if not respuesta.user or not respuesta.session:
+            raise ValueError('Sesión no válida')
+        st.session_state.cliente = cliente
+        st.session_state.usuario_id = respuesta.user.id
+        guardar_cookie_sesion(cliente)  # Guardar refresh token rotado.
+        return True
+    except Exception:
+        limpiar_cookie()
+        return False
+
+
 def sesion_valida():
     cliente = st.session_state.get('cliente')
     if cliente is None:
@@ -67,9 +114,11 @@ def sesion_valida():
         sesion = cliente.auth.get_session()
         if not sesion or not sesion.user or sesion.user.id != st.session_state.get('usuario_id'):
             return False
-        # Verificar token con el servidor de autenticación.
         verificacion = cliente.auth.get_user()
-        return bool(verificacion.user and verificacion.user.id == st.session_state['usuario_id'])
+        valida = bool(verificacion.user and verificacion.user.id == st.session_state['usuario_id'])
+        if valida:
+            guardar_cookie_sesion(cliente)
+        return valida
     except Exception:
         return False
 
@@ -156,11 +205,15 @@ st.title('Control de gastos')
 if not sesion_valida():
     for clave in ('cliente', 'usuario_id'):
         st.session_state.pop(clave, None)
+    if recuperar_sesion_recordada():
+        st.rerun()
     st.subheader('Iniciar sesión')
     with st.form('login'):
         correo = st.text_input('Correo electrónico')
         contrasena = st.text_input('Contraseña', type='password')
         enviar = st.form_submit_button('Entrar')
+    if cookies is None:
+        st.warning('La sesión persistente requiere configurar COOKIE_PASSWORD en los secretos de Streamlit.')
     if enviar:
         try:
             cliente = nuevo_cliente()
@@ -169,6 +222,7 @@ if not sesion_valida():
                 raise ValueError('No se ha recibido una sesión válida')
             st.session_state.cliente = cliente
             st.session_state.usuario_id = respuesta.user.id
+            guardar_cookie_sesion(cliente)
             st.rerun()
         except Exception:
             st.error('No se ha podido iniciar sesión. Comprueba el correo, la contraseña y la configuración de Supabase.')
