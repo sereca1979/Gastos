@@ -317,6 +317,129 @@ with tabs[0]:
     a.markdown(indicador_financiero('Ingresos', ingresos, 'ingresos'), unsafe_allow_html=True)
     b.markdown(indicador_financiero('Gastos', gastos, 'gastos'), unsafe_allow_html=True)
     c.markdown(indicador_financiero('Ahorro', ingresos - gastos, 'ahorro'), unsafe_allow_html=True)
+    # Avisos automáticos: solo datos del usuario autenticado, sin servicios externos.
+    st.subheader('Alertas y oportunidades de ahorro')
+    import calendar
+    from datetime import datetime
+
+    def gasto_categoria_hasta(clave_mes, categoria, dia_limite=None):
+        total = Decimal('0')
+        for mov in movimientos:
+            fecha_mov = str(mov.get('fecha', ''))[:10]
+            if es_excluido(mov) or not fecha_mov.startswith(clave_mes):
+                continue
+            if dia_limite is not None and int(fecha_mov[8:10]) > dia_limite:
+                continue
+            if categoria_movimiento(mov) != categoria:
+                continue
+            valor = Decimal(str(mov['importe']))
+            if mov['tipo'] == 'gasto':
+                total += valor
+            elif mov['tipo'] == 'ingreso' and categoria in CATEGORIAS_COMPENSACION:
+                total -= valor
+        return max(total, Decimal('0'))
+
+    def meses_anteriores(clave, cantidad=3):
+        anio, num_mes = map(int, clave.split('-'))
+        resultado = []
+        for _ in range(cantidad):
+            num_mes -= 1
+            if num_mes == 0:
+                num_mes = 12
+                anio -= 1
+            anterior = f'{anio}-{num_mes:02d}'
+            if anterior >= FECHA_INICIO[:7]:
+                resultado.append(anterior)
+        return resultado
+
+    avisos = []
+    anio_sel, mes_sel = map(int, mes.split('-'))
+    dias_mes = calendar.monthrange(anio_sel, mes_sel)[1]
+    mes_actual = hoy.strftime('%Y-%m')
+    mes_en_curso = mes == mes_actual
+    dias_observados = min(hoy.day, dias_mes) if mes_en_curso else dias_mes
+    mes_futuro = mes > mes_actual
+    categorias_gasto = sorted({c['nombre'] for c in categorias if c['tipo'] == 'gasto'})
+    try:
+        presup_avisos = consultar('presupuestos')
+    except Exception:
+        presup_avisos = []
+    limites = {}
+    for pres in presup_avisos:
+        if str(pres.get('mes') or '')[:7] == mes:
+            nombre = nombres_categorias.get(pres.get('categoria_id'))
+            if nombre in categorias_gasto:
+                limites[nombre] = Decimal(str(pres.get('importe') or '0'))
+
+    # 1. Umbrales de presupuesto: 80 % y 100 %.
+    for nombre, limite in limites.items():
+        if limite <= 0 or mes_futuro:
+            continue
+        gastado = gasto_categoria_hasta(mes, nombre, dias_observados)
+        porcentaje = gastado / limite * 100
+        if porcentaje >= 100:
+            avisos.append((0, '🔴', f'{nombre}: presupuesto superado',
+                           f'{dinero(gastado)} gastados de {dinero(limite)} ({porcentaje:.0f} %).'))
+        elif porcentaje >= 80:
+            restante = dias_mes - dias_observados
+            cola = f' Quedan {restante} días de mes.' if mes_en_curso else ''
+            avisos.append((1, '🟠', f'{nombre}: presupuesto casi agotado',
+                           f'Has consumido el {porcentaje:.0f} % de {dinero(limite)}.{cola}'))
+
+    # 2 y 6. Comparación con los mismos días de hasta tres meses anteriores.
+    anteriores = meses_anteriores(mes)
+    meses_con_datos = {str(m['fecha'])[:7] for m in movimientos
+                       if not es_excluido(m) and m.get('tipo') in ('gasto', 'ingreso')}
+    comparables = [x for x in anteriores if x in meses_con_datos]
+    if not mes_futuro and len(comparables) >= 2:
+        for nombre in categorias_gasto:
+            actual = gasto_categoria_hasta(mes, nombre, dias_observados)
+            muestras = [gasto_categoria_hasta(x, nombre,
+                        min(dias_observados, calendar.monthrange(int(x[:4]), int(x[5:]))[1]))
+                        for x in comparables]
+            promedio = sum(muestras, Decimal('0')) / len(muestras)
+            if promedio < Decimal('30'):
+                continue  # evita avisos por importes insignificantes
+            variacion = (actual - promedio) / promedio * 100
+            if variacion >= 25 and actual - promedio >= Decimal('20'):
+                avisos.append((2, '📈', f'{nombre}: gasto superior al habitual',
+                               f'{variacion:.0f} % más que la media de {len(comparables)} meses anteriores '
+                               f'(mismos días de mes).'))
+            elif variacion <= -20 and promedio - actual >= Decimal('20'):
+                avisos.append((4, '🟢', f'{nombre}: has reducido el gasto',
+                               f'{abs(variacion):.0f} % menos que la media de '
+                               f'{len(comparables)} meses anteriores (mismos días de mes).'))
+
+    # 3. Proyección lineal del gasto, solo durante el mes actual y con muestra suficiente.
+    if mes_en_curso and dias_observados >= 7 and dias_observados < dias_mes:
+        gasto_hasta_hoy = gastos
+        estimado = gasto_hasta_hoy * Decimal(dias_mes) / Decimal(dias_observados)
+        presupuesto_total = sum((v for v in limites.values() if v > 0), Decimal('0'))
+        if presupuesto_total > 0:
+            # Comparar exclusivamente las categorías presupuestadas; evita mezclar alcances.
+            gasto_controlado = sum((gasto_categoria_hasta(mes, nombre, dias_observados)
+                                   for nombre, limite in limites.items() if limite > 0), Decimal('0'))
+            estimado_controlado = gasto_controlado * Decimal(dias_mes) / Decimal(dias_observados)
+            if estimado_controlado > presupuesto_total * Decimal('1.05'):
+                avisos.append((1, '📊', 'Previsión: superarás el presupuesto',
+                               f'Gasto estimado en categorías presupuestadas: {dinero(estimado_controlado)} '
+                               f'frente a {dinero(presupuesto_total)}. Proyección lineal orientativa.'))
+        elif gasto_hasta_hoy > 0:
+            avisos.append((3, '📊', 'Previsión de gasto a fin de mes',
+                           f'Al ritmo actual: aproximadamente {dinero(estimado)}. '
+                           'Estimación lineal orientativa, no incluye pagos futuros conocidos.'))
+
+    avisos.sort(key=lambda a: a[0])
+    if avisos:
+        for _, simbolo, titulo, detalle_aviso in avisos[:3]:
+            st.markdown(f'**{simbolo} {titulo}**  \n{detalle_aviso}')
+        if len(avisos) > 3:
+            with st.expander(f'Ver {len(avisos) - 3} avisos más'):
+                for _, simbolo, titulo, detalle_aviso in avisos[3:]:
+                    st.markdown(f'**{simbolo} {titulo}**  \n{detalle_aviso}')
+    else:
+        st.caption('Sin avisos relevantes para este mes. Las comparaciones históricas requieren al menos dos meses anteriores con movimientos.')
+
     def mostrar_quesito(periodo, clave):
         por_categoria = {}
         for m in movimientos:
