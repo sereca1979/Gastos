@@ -241,19 +241,29 @@ with tabs[0]:
         if not por_categoria:
             st.info('No hay gastos registrados en este periodo.')
             return
-        iconos = {
-            'Alimentación': '🛒', 'Restaurantes y ocio': '🍽️', 'Vivienda': '🏠',
-            'Suministros': '💡', 'Coche y Transportes': '🚗', 'Salud': '⚕️',
-            'Ropa y compras': '🛍️',
-            'Seguros e impuestos': '🛡️', 'Regalos y donaciones': '🎁',
-            'Otros gastos': '📦', 'Sin categoría': '❔'
+        # Iconos vectoriales monocromos: heredan exactamente el color del sector.
+        trazos_iconos = {
+            'Alimentación': '<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 2h3l3 13h13l3-10H5"/>',
+            'Restaurantes y ocio': '<path d="M4 2v8m4-8v8m-4-4h4m-2 4v12M16 2c-4 4-4 11 0 12h3V2m0 12v8"/>',
+            'Vivienda': '<path d="m2 11 10-9 10 9M4 10v12h16V10M9 22v-8h6v8"/>',
+            'Suministros': '<path d="M9 18h6m-5 3h4M9 15c-7-5-3-13 3-13s10 8 3 13l-1 3h-4z"/>',
+            'Coche y Transportes': '<path d="M4 16 6 8h12l2 8v5h-3v-3H7v3H4v-5zM4 16h16M6 8l2-4h8l2 4"/><circle cx="7.5" cy="15" r="1"/><circle cx="16.5" cy="15" r="1"/>',
+            'Salud': '<path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/>',
+            'Ropa y compras': '<path d="M4 9h16l-1 13H5L4 9zM9 10V6a3 3 0 0 1 6 0v4"/>',
+            'Seguros e impuestos': '<path d="m12 2 9 4v6c0 6-4 9-9 11-5-2-9-5-9-11V6z"/>',
+            'Regalos y donaciones': '<rect x="3" y="9" width="18" height="13" rx="1"/><path d="M2 9h20M12 9v13M12 9C3 9 5 2 9 3c2 0 3 3 3 6zm0 0c9 0 7-7 3-6-2 0-3 3-3 6z"/>',
+            'Otros gastos': '<path d="M3 7 12 2l9 5v11l-9 5-9-5zM3 7l9 5 9-5m-9 5v11"/>',
+            'Sin categoría': '<circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 0 1 6 0c0 3-3 3-3 6m0 3v1"/>'
         }
+        def icono_svg(nombre, color, x, y, escala=1):
+            trazos = trazos_iconos.get(nombre, trazos_iconos['Sin categoría'])
+            return (f'<g transform="translate({x},{y}) scale({escala})" '
+                    f'fill="none" stroke="{color}" stroke-width="2" '
+                    f'stroke-linecap="round" stroke-linejoin="round">{trazos}</g>')
         datos_pie = pd.DataFrame([{'Categoría': k, 'Importe': v}
                                   for k, v in por_categoria.items() if v > 0])
         datos_pie = datos_pie.sort_values('Importe', ascending=False).reset_index(drop=True)
         total_pie = datos_pie['Importe'].sum()
-        datos_pie['Llamada'] = datos_pie.apply(
-            lambda fila: f"{iconos.get(fila['Categoría'], '📌')} {dinero(fila['Importe'])}", axis=1)
         # SVG responsive: llamadas con líneas guía, sin recortes de Altair.
         import math
         from html import escape
@@ -292,7 +302,7 @@ with tabs[0]:
                 return (cx + r * math.cos(theta), cy + r * math.sin(theta))
             if amplitud >= 2 * math.pi - 0.000001:
                 sectores_svg.append(
-                    f'<circle cx="{cx}" cy="{cy}" r="{radio_ext}" fill="{color}"/>')
+                    f'<circle cx="{cx}" cy="{cy}" r="{radio_ext}" fill="{color}"><title>{escape(nombre)}: {escape(dinero(importe))}</title></circle>')
             else:
                 x1,y1 = punto(radio_ext, angulo)
                 x2,y2 = punto(radio_ext, fin)
@@ -300,7 +310,7 @@ with tabs[0]:
                 sectores_svg.append(
                     f'<path d="M {cx} {cy} L {x1:.2f} {y1:.2f} '
                     f'A {radio_ext} {radio_ext} 0 {grande} 1 {x2:.2f} {y2:.2f} Z" '
-                    f'fill="{color}" stroke="#151515" stroke-width="1.5"/>')
+                    f'fill="{color}" stroke="#151515" stroke-width="1.5"><title>{escape(nombre)}: {escape(dinero(importe))}</title></path>')
             medio = angulo + amplitud/2
             x1,y1 = punto(radio_ext + 3, medio)
             x2,y2 = punto(radio_ext + 23, medio)
@@ -308,17 +318,17 @@ with tabs[0]:
             etiquetas.append({
                 'lado': 'derecha' if derecha else 'izquierda',
                 'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
-                'y_obj': y2, 'texto': f"{iconos.get(nombre, '📌')} {dinero(importe)}",
+                'y_obj': y2, 'texto': dinero(importe), 'nombre': nombre,
                 'color': color
             })
             leyenda.append(
+                f'<g><title>{escape(nombre)}: {escape(dinero(importe))}</title>'
                 f'<rect x="790" y="{85 + indice*29}" width="13" height="13" '
                 f'rx="3" fill="{color}"/>'
                 f'<text x="813" y="{96 + indice*29}" fill="#E5E7EB" '
                 f'font-size="15">{escape(nombre)}</text>'
-                f'<text x="1040" y="{96 + indice*29}" fill="#E5E7EB" '
-                f'font-size="18" text-anchor="middle">'
-                f'{escape(iconos.get(nombre, "📌"))}</text>')
+                + icono_svg(nombre, color, 1028, 79 + indice*29, 0.72)
+                + '</g>')
             angulo = fin
 
         # Evitar solapamiento vertical entre llamadas próximas.
@@ -347,7 +357,10 @@ with tabs[0]:
                 f'fill="none" stroke="{e["color"]}" stroke-width="1.5"/>'
                 f'<text x="{texto_x}" y="{e["y"]+5:.1f}" '
                 f'text-anchor="{ancla}" font-size="15" font-weight="600" '
-                f'fill="#F3F4F6">{escape(e["texto"])}</text>')
+                f'fill="#F3F4F6">{escape(e["texto"])}</text>'
+                + icono_svg(e['nombre'], e['color'],
+                            texto_x - 27 if derecha else texto_x - 57,
+                            e['y'] - 14, 0.70))
 
         svg = (
             '<div style="width:100%;overflow-x:auto">'
