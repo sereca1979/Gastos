@@ -215,7 +215,42 @@ def importes_balance(registros):
 
 
 st.info('Histórico visible desde el 1 de septiembre de 2026. Los datos anteriores siguen conservados en Supabase.')
-tabs = st.tabs(['Resumen', 'Movimientos', 'Configuración', 'Importar extractos'])
+# Paleta estable y amplia: ningún color depende del orden ni del importe.
+colores_categorias = {
+    'Alimentación': '#277DA1',
+    'Restaurantes y ocio': '#F8961E',
+    'Vivienda': '#43AA8B',
+    'Suministros': '#F9C74F',
+    'Coche y Transportes': '#577590',
+    'Salud': '#F94144',
+    'Ropa y compras': '#9B5DE5',
+    'Seguros e impuestos': '#4D908E',
+    'Regalos y donaciones': '#F15BB5',
+    'Otros gastos': '#90BE6D',
+    'Sin categoría': '#8D99AE',
+    'Compras': '#00BBF9',
+    'Colegio': '#B8A1E3',
+    'Dani': '#E76F51',
+    'Loterías': '#B56576',
+    'Transporte': '#4361EE',
+    'Viajes': '#F9844A',
+    'Devoluciones': '#2A9D8F',
+    'Intereses': '#C77DFF',
+    'Otros ingresos': '#06D6A0',
+    'Nómina': '#118AB2',
+}
+import hashlib
+colores_extra = ['#E09F3E', '#7B2CBF', '#2EC4B6', '#FF6B6B',
+                 '#A1C181', '#B5838D', '#3A86FF', '#E29578',
+                 '#7EBDC2', '#CDB4DB', '#DDA15E', '#A8DADC']
+def color_de(nombre):
+    if nombre in colores_categorias:
+        return colores_categorias[nombre]
+    idx = int(hashlib.sha256(nombre.encode('utf-8')).hexdigest()[:8], 16)
+    return colores_extra[idx % len(colores_extra)]
+
+
+tabs = st.tabs(['Resumen', 'Movimientos', 'Presupuestos', 'Configuración', 'Importar extractos'])
 
 def indicador_financiero(titulo, valor, tipo):
     """Indicador con etiqueta discreta y cifra destacada por signo económico."""
@@ -293,40 +328,6 @@ with tabs[0]:
         import math
         from html import escape
         import streamlit.components.v1 as components
-
-        # Paleta estable y amplia: ningún color depende del orden ni del importe.
-        colores_categorias = {
-            'Alimentación': '#277DA1',
-            'Restaurantes y ocio': '#F8961E',
-            'Vivienda': '#43AA8B',
-            'Suministros': '#F9C74F',
-            'Coche y Transportes': '#577590',
-            'Salud': '#F94144',
-            'Ropa y compras': '#9B5DE5',
-            'Seguros e impuestos': '#4D908E',
-            'Regalos y donaciones': '#F15BB5',
-            'Otros gastos': '#90BE6D',
-            'Sin categoría': '#8D99AE',
-            'Compras': '#00BBF9',
-            'Colegio': '#B8A1E3',
-            'Dani': '#E76F51',
-            'Loterías': '#B56576',
-            'Transporte': '#4361EE',
-            'Viajes': '#F9844A',
-            'Devoluciones': '#2A9D8F',
-            'Intereses': '#C77DFF',
-            'Otros ingresos': '#06D6A0',
-            'Nómina': '#118AB2',
-        }
-        import hashlib
-        colores_extra = ['#E09F3E', '#7B2CBF', '#2EC4B6', '#FF6B6B',
-                         '#A1C181', '#B5838D', '#3A86FF', '#E29578',
-                         '#7EBDC2', '#CDB4DB', '#DDA15E', '#A8DADC']
-        def color_de(nombre):
-            if nombre in colores_categorias:
-                return colores_categorias[nombre]
-            idx = int(hashlib.sha256(nombre.encode('utf-8')).hexdigest()[:8], 16)
-            return colores_extra[idx % len(colores_extra)]
 
         # Donut limpio + leyenda alineada en filas. Las llamadas exteriores se
         # sustituyen por importes en la leyenda: evita cruces y superposiciones.
@@ -745,7 +746,141 @@ with tabs[1]:
                 except Exception:
                     st.error('No se pudo eliminar el movimiento.')
 
+
 with tabs[2]:
+    st.subheader('Presupuestos mensuales')
+    st.caption('Define un límite mensual solo para las categorías de gasto que quieras controlar. Se aplica a todos los meses hasta que lo modifiques.')
+    try:
+        presupuestos = consultar('presupuestos')
+    except Exception:
+        st.error('No se pudo acceder a la tabla presupuestos. Ejecuta primero el SQL facilitado en Supabase.')
+        presupuestos = None
+    if presupuestos is not None:
+        cats_gasto = sorted([c for c in categorias if c['tipo'] == 'gasto'], key=lambda c: c['nombre'].casefold())
+        presup_por_id = {str(p['categoria_id']): p for p in presupuestos}
+        with st.form('definir_presupuestos'):
+            st.caption('Deja el importe en cero para quitar el presupuesto de una categoría.')
+            nuevos_presupuestos = {}
+            for cat in cats_gasto:
+                anterior = presup_por_id.get(str(cat['id']))
+                importe_anterior = float(anterior['importe_mensual']) if anterior else 0.0
+                st.markdown(
+                    f'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;'
+                    f'background:{color_de(cat["nombre"])};margin-right:7px"></span>'
+                    f'<span>{__import__("html").escape(cat["nombre"])}</span>',
+                    unsafe_allow_html=True)
+                nuevos_presupuestos[str(cat['id'])] = st.number_input(
+                    'Presupuesto mensual', label_visibility='collapsed', min_value=0.0, value=importe_anterior,
+                    step=10.0, format='%.2f', key=f'presupuesto_{cat["id"]}')
+            guardar_pres = st.form_submit_button('Guardar presupuestos')
+        if guardar_pres:
+            try:
+                for cat in cats_gasto:
+                    cid = str(cat['id'])
+                    nuevo = Decimal(str(nuevos_presupuestos[cid])).quantize(Decimal('0.01'))
+                    anterior = presup_por_id.get(cid)
+                    if anterior and nuevo == Decimal(str(anterior['importe_mensual'])):
+                        continue
+                    if anterior and nuevo == 0:
+                        ejecutar('presupuestos', 'delete', identificador=anterior['id'])
+                    elif anterior:
+                        ejecutar('presupuestos', 'update', {'importe_mensual': str(nuevo)}, anterior['id'])
+                    elif nuevo > 0:
+                        ejecutar('presupuestos', 'insert', {
+                            'usuario_id': st.session_state.usuario_id,
+                            'categoria_id': cat['id'], 'importe_mensual': str(nuevo)})
+                st.success('Presupuestos guardados.')
+                st.rerun()
+            except Exception as exc:
+                st.error(f'No se pudieron guardar los presupuestos: {exc}')
+
+        activos = {cid: Decimal(str(p['importe_mensual'])) for cid, p in presup_por_id.items()
+                   if Decimal(str(p['importe_mensual'])) > 0 and cid in {str(c['id']) for c in cats_gasto}}
+        if not activos:
+            st.info('Establece al menos un presupuesto para ver las comparativas.')
+        else:
+            def gasto_presupuestado(mes_clave, categoria_id=None):
+                acumulado = Decimal('0')
+                for m in movimientos:
+                    if es_excluido(m) or not str(m['fecha']).startswith(mes_clave):
+                        continue
+                    cid = str(m.get('categoria_id'))
+                    if cid not in activos or (categoria_id is not None and cid != categoria_id):
+                        continue
+                    importe = Decimal(str(m['importe']))
+                    if m['tipo'] == 'gasto':
+                        acumulado += importe
+                    elif m['tipo'] == 'ingreso' and categoria_movimiento(m) in CATEGORIAS_COMPENSACION:
+                        acumulado -= importe
+                return acumulado
+
+            hoy_pres = date.today()
+            meses_pres = sorted({str(m['fecha'])[:7] for m in movimientos} | {hoy_pres.strftime('%Y-%m')}, reverse=True)
+            mes_pres = st.selectbox('Mes a comparar', meses_pres, key='mes_presupuestos')
+            total_pres = sum(activos.values(), Decimal('0'))
+            gasto_mes = gasto_presupuestado(mes_pres)
+            a, b, c = st.columns(3)
+            a.metric('Presupuesto mensual', dinero(total_pres))
+            b.metric('Gasto real', dinero(gasto_mes))
+            c.metric('Disponible', dinero(total_pres - gasto_mes))
+            filas = []
+            for cid, limite in activos.items():
+                real = gasto_presupuestado(mes_pres, cid)
+                filas.append({'Categoría': nombres_categorias.get(cid, 'Sin categoría'),
+                              'Presupuesto': float(limite), 'Gasto real': float(real),
+                              'Diferencia': float(limite-real)})
+            detalle = pd.DataFrame(filas).sort_values('Categoría')
+            st.subheader('Comparación mensual por categoría')
+            detalle_largo = detalle.melt(id_vars=['Categoría'], value_vars=['Presupuesto', 'Gasto real'],
+                                         var_name='Tipo', value_name='Euros')
+            # Cada categoría conserva exactamente el color de su sector del quesito.
+            # Presupuesto: barra sólida; gasto real: mismo tono, más transparente.
+            colores_detalle = sorted(detalle['Categoría'].unique().tolist())
+            graf_mes = alt.Chart(detalle_largo).mark_bar().encode(
+                x=alt.X('Categoría:N', title=None, axis=alt.Axis(labelAngle=-30)),
+                xOffset=alt.XOffset('Tipo:N', sort=['Presupuesto', 'Gasto real']),
+                y=alt.Y('Euros:Q', title='Euros'),
+                color=alt.Color('Categoría:N', scale=alt.Scale(
+                    domain=colores_detalle, range=[color_de(c) for c in colores_detalle]),
+                    legend=None),
+                opacity=alt.Opacity('Tipo:N', scale=alt.Scale(
+                    domain=['Presupuesto', 'Gasto real'], range=[1.0, 0.48]),
+                    legend=alt.Legend(title='Barra sólida: presupuesto · clara: gasto real')),
+                tooltip=['Categoría:N','Tipo:N',alt.Tooltip('Euros:Q', format=',.2f')]
+            ).properties(height=320)
+            st.caption('Cada categoría utiliza el mismo color que en los gráficos circulares. Barra sólida: presupuesto; barra clara: gasto real.')
+            st.altair_chart(graf_mes, use_container_width=True)
+            st.dataframe(detalle.style.format({'Presupuesto': dinero, 'Gasto real': dinero,
+                                                'Diferencia': dinero}),
+                         hide_index=True, use_container_width=True)
+
+            st.subheader('Evolución anual del presupuesto')
+            anos_pres = sorted({int(str(m['fecha'])[:4]) for m in movimientos} | {hoy_pres.year}, reverse=True)
+            ano_pres = st.selectbox('Año', anos_pres, key='ano_presupuestos')
+            nombres_meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+            evolucion = pd.DataFrame([{
+                'Mes': nombres_meses[n-1], 'Número': n,
+                'Presupuesto': float(total_pres),
+                'Gasto real': float(gasto_presupuestado(f'{ano_pres}-{n:02d}'))}
+                for n in range(1, 13)])
+            evolucion_larga = evolucion.melt(id_vars=['Mes','Número'],
+                    value_vars=['Presupuesto','Gasto real'], var_name='Tipo', value_name='Euros')
+            evolucion_larga['Posición'] = evolucion_larga['Número'] + evolucion_larga['Tipo'].map(
+                {'Presupuesto':-0.19,'Gasto real':0.19})
+            graf_ano = alt.Chart(evolucion_larga).mark_bar(size=26).encode(
+                x=alt.X('Posición:Q', scale=alt.Scale(domain=[0.5,12.5]),
+                    axis=alt.Axis(values=list(range(1,13)),
+                        labelExpr="['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][datum.value - 1]",
+                        title=None, labelAngle=0)),
+                y=alt.Y('Euros:Q', title='Euros'),
+                color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Presupuesto','Gasto real'],
+                                range=['#0875d1','#82c8fa']), title=None),
+                tooltip=['Mes:N','Tipo:N',alt.Tooltip('Euros:Q', format=',.2f')]
+            ).properties(height=330)
+            st.altair_chart(graf_ano, use_container_width=True)
+            st.caption('El presupuesto anual se calcula aplicando los límites mensuales actuales a cada mes; no se guarda un histórico de cambios de presupuesto.')
+
+with tabs[3]:
     st.subheader('Categorías personalizables')
     st.caption('Puedes crear las categorías iniciales que falten sin duplicar las existentes.')
     if st.button('Crear categorías iniciales que falten'):
@@ -805,7 +940,7 @@ with tabs[2]:
                 st.error('No se puede eliminar una categoría utilizada por movimientos o presupuestos.')
 
 
-with tabs[3]:
+with tabs[4]:
     st.subheader('Importar extractos bancarios')
     st.caption('Se importan únicamente movimientos desde el 01/09/2026. Los anteriores permanecen guardados, pero ocultos. Las transferencias dudosas aparecen para que decidas si importarlas como transferencia, gasto o ingreso. Las operaciones de inversión siguen excluidas por defecto.')
     banco = st.selectbox('Banco', ['Ibercaja', 'Trade Republic'])
