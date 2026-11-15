@@ -802,7 +802,7 @@ with tabs[2]:
 
 with tabs[3]:
     st.subheader('Importar extractos bancarios')
-    st.caption('Se importan únicamente movimientos desde el 01/09/2026. Los anteriores permanecen guardados, pero ocultos. Las transferencias dudosas y operaciones de inversión se excluyen por defecto.')
+    st.caption('Se importan únicamente movimientos desde el 01/09/2026. Los anteriores permanecen guardados, pero ocultos. Las transferencias dudosas aparecen para que decidas si importarlas como transferencia, gasto o ingreso. Las operaciones de inversión siguen excluidas por defecto.')
     banco = st.selectbox('Banco', ['Ibercaja', 'Trade Republic'])
     archivo = st.file_uploader('Extracto', type=['xlsx'] if banco == 'Ibercaja' else ['pdf'], key='extracto')
     if archivo is not None:
@@ -886,6 +886,7 @@ with tabs[3]:
                     'Tipo': m['tipo'],
                     'Excluir del balance': False,
                     'Coincidencia manual': ('Revisar' if i in coincidencias else 'Sin coincidencia'),
+                    'Decisión transferencia': ('Pendiente de decidir' if m['tipo'] == 'transferencia' else 'No aplica'),
                     'Categoría': sugerencias[i][0] if sugerencias[i][0] in categorias_por_tipo.get(m['tipo'], {}) else 'Sin categoría',
                     'Revisión': sugerencias[i][1], 'Aviso': m['observacion']
                 } for i, m in enumerate(nuevos)])
@@ -902,6 +903,9 @@ with tabs[3]:
                     parte = filas.iloc[idx].copy()
                     parte['Categoría'] = parte['Categoría'].where(
                         parte['Categoría'].isin(opciones), 'Sin categoría')
+                    if tipo_import == 'transferencia':
+                        parte['Incluir'] = True
+                        st.caption('Confirma cada transferencia: puedes omitirla, conservarla sin efecto en el ahorro o contabilizarla como gasto/ingreso.')
                     editada = st.data_editor(
                         parte, hide_index=True, use_container_width=True,
                         disabled=['Fecha', 'Banco', 'Concepto', 'Importe (€)', 'Aviso',
@@ -909,6 +913,12 @@ with tabs[3]:
                         column_config={
                             'Categoría': st.column_config.SelectboxColumn(
                                 'Categoría', options=opciones, required=True),
+                            'Decisión transferencia': st.column_config.SelectboxColumn(
+                                'Decisión transferencia',
+                                options=(['Pendiente de decidir', 'No importar',
+                                          'Transferencia (no cuenta)', 'Gasto', 'Ingreso']
+                                         if tipo_import == 'transferencia' else ['No aplica']),
+                                required=True),
                             'Coincidencia manual': st.column_config.SelectboxColumn(
                                 'Coincidencia manual',
                                 options=['Sin coincidencia', 'Revisar',
@@ -930,8 +940,17 @@ with tabs[3]:
                                            f"{m['concepto']}")
 
                 st.caption('Revisa especialmente las filas con «Revisar». Las categorías pueden cambiarse antes de guardar. Para asignarlas, créalas primero en la pestaña Categorías.')
-                st.caption('Desmarca los movimientos que no quieras importar. Las transferencias no cuentan para el ahorro.')
+                st.caption('Desmarca los movimientos que no quieras importar. Una transferencia conservada como transferencia no cuenta para el ahorro.')
                 if st.button('Guardar movimientos seleccionados', type='primary'):
+                    pendientes_transferencias = [
+                        i for i, fila in revisado.iterrows()
+                        if nuevos[i]['tipo'] == 'transferencia' and bool(fila['Incluir'])
+                        and fila['Decisión transferencia'] == 'Pendiente de decidir'
+                    ]
+                    if pendientes_transferencias:
+                        st.error(f'Hay {len(pendientes_transferencias)} transferencias pendientes de decidir. '
+                                 'Elige una opción en la columna «Decisión transferencia».')
+                        st.stop()
                     pendientes = [
                         i for i, fila in revisado.iterrows()
                         if i in coincidencias and bool(fila['Incluir'])
@@ -943,21 +962,28 @@ with tabs[3]:
                         st.stop()
                     elegidos = []
                     for i, fila in revisado.iterrows():
-                        if not bool(fila['Incluir']) or (
-                            fila['Coincidencia manual'] == 'Es el mismo: no importar'
-                        ):
+                        if (not bool(fila['Incluir'])
+                            or fila['Coincidencia manual'] == 'Es el mismo: no importar'
+                            or fila['Decisión transferencia'] == 'No importar'):
                             continue
                         m = nuevos[i]
+                        tipo_final = fila['Tipo']
+                        if m['tipo'] == 'transferencia':
+                            tipo_final = {
+                                'Transferencia (no cuenta)': 'transferencia',
+                                'Gasto': 'gasto',
+                                'Ingreso': 'ingreso'
+                            }[fila['Decisión transferencia']]
                         categoria_nombre = fila['Categoría']
-                        categoria_id = categorias_por_tipo.get(fila['Tipo'], {}).get(categoria_nombre)
+                        categoria_id = categorias_por_tipo.get(tipo_final, {}).get(categoria_nombre)
                         if categoria_nombre != 'Sin categoría' and categoria_id is None:
-                            st.error(f"La categoría «{categoria_nombre}» no existe para el tipo «{fila['Tipo']}». Créala o selecciona otra.")
+                            st.error(f"La categoría «{categoria_nombre}» no existe para el tipo «{tipo_final}». Créala o selecciona otra.")
                             elegidos = None
                             break
                         elegidos.append({
                             'usuario_id': st.session_state.usuario_id,
                             'fecha': m['fecha'], 'concepto': m['concepto'],
-                            'importe': str(m['importe']), 'tipo': fila['Tipo'],
+                            'importe': str(m['importe']), 'tipo': tipo_final,
                             'origen': 'importacion', 'banco_origen': m['banco'],
                             'huella_importacion': m['huella'], 'categoria_id': categoria_id,
                             'excluir_balance': bool(fila['Excluir del balance'])
@@ -977,6 +1003,7 @@ with tabs[3]:
                             for i, fila in revisado.iterrows():
                                 if (not bool(fila['Incluir'])
                                     or fila['Coincidencia manual'] == 'Es el mismo: no importar'
+                                    or fila['Decisión transferencia'] == 'No importar'
                                     or fila['Tipo'] not in ('gasto', 'ingreso')):
                                     continue
                                 categoria_id = categorias_por_tipo.get(fila['Tipo'], {}).get(fila['Categoría'])
