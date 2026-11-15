@@ -269,112 +269,95 @@ with tabs[0]:
         from html import escape
         import streamlit.components.v1 as components
 
-        paleta = ['#2D76C8', '#78BFFA', '#34A88B', '#F0A75A', '#C86A9C',
-                  '#9D8AE0', '#E17C72', '#7CBF76', '#D9BA52', '#6FADB6',
-                  '#A3A8B0', '#C0A0D8']
-        # Colores fijos por nombre, independientes del importe y del mes.
+        # Paleta estable y amplia: ningún color depende del orden ni del importe.
         colores_categorias = {
-            'Alimentación': '#2D76C8',
-            'Restaurantes y ocio': '#F0A75A',
-            'Vivienda': '#34A88B',
-            'Suministros': '#D9BA52',
-            'Coche y Transportes': '#78BFFA',
-            'Salud': '#C86A9C',
-            'Ropa y compras': '#9D8AE0',
-            'Seguros e impuestos': '#6FADB6',
-            'Regalos y donaciones': '#E17C72',
-            'Otros gastos': '#7CBF76',
-            'Sin categoría': '#A3A8B0',
+            'Alimentación': '#277DA1',
+            'Restaurantes y ocio': '#F8961E',
+            'Vivienda': '#43AA8B',
+            'Suministros': '#F9C74F',
+            'Coche y Transportes': '#577590',
+            'Salud': '#F94144',
+            'Ropa y compras': '#9B5DE5',
+            'Seguros e impuestos': '#4D908E',
+            'Regalos y donaciones': '#F15BB5',
+            'Otros gastos': '#90BE6D',
+            'Sin categoría': '#8D99AE',
+            'Compras': '#00BBF9',
+            'Colegio': '#B8A1E3',
+            'Dani': '#E76F51',
+            'Loterías': '#B56576',
+            'Transporte': '#4361EE',
+            'Viajes': '#F9844A',
+            'Devoluciones': '#2A9D8F',
+            'Intereses': '#C77DFF',
+            'Otros ingresos': '#06D6A0',
+            'Nómina': '#118AB2',
         }
-        cx, cy, radio_ext, radio_int = 430, 250, 145, 85
+        import hashlib
+        colores_extra = ['#E09F3E', '#7B2CBF', '#2EC4B6', '#FF6B6B',
+                         '#A1C181', '#B5838D', '#3A86FF', '#E29578',
+                         '#7EBDC2', '#CDB4DB', '#DDA15E', '#A8DADC']
+        def color_de(nombre):
+            if nombre in colores_categorias:
+                return colores_categorias[nombre]
+            idx = int(hashlib.sha256(nombre.encode('utf-8')).hexdigest()[:8], 16)
+            return colores_extra[idx % len(colores_extra)]
+
+        # Donut limpio + leyenda alineada en filas. Las llamadas exteriores se
+        # sustituyen por importes en la leyenda: evita cruces y superposiciones.
+        cx, cy, radio_ext, radio_int = 240, 240, 170, 103
         angulo = -math.pi / 2
         sectores_svg = []
-        etiquetas = []
-        leyenda = []
+        filas_leyenda = []
+        altura_fila = 32
         for indice, fila in datos_pie.iterrows():
             nombre = str(fila['Categoría'])
             importe = float(fila['Importe'])
+            color = color_de(nombre)
             amplitud = 2 * math.pi * importe / total_pie
             fin = angulo + amplitud
-            color = colores_categorias.get(nombre, '#C0A0D8')
-            # Arcos de más de media circunferencia necesitan large-arc-flag.
-            def punto(r, theta):
-                return (cx + r * math.cos(theta), cy + r * math.sin(theta))
-            if amplitud >= 2 * math.pi - 0.000001:
+            titulo = f'{escape(nombre)}: {escape(dinero(importe))}'
+            if amplitud >= 2 * math.pi - 1e-6:
                 sectores_svg.append(
-                    f'<circle cx="{cx}" cy="{cy}" r="{radio_ext}" fill="{color}"><title>{escape(nombre)}: {escape(dinero(importe))}</title></circle>')
+                    f'<circle cx="{cx}" cy="{cy}" r="{radio_ext}" fill="{color}">'
+                    f'<title>{titulo}</title></circle>')
             else:
-                x1,y1 = punto(radio_ext, angulo)
-                x2,y2 = punto(radio_ext, fin)
+                x1 = cx + radio_ext * math.cos(angulo)
+                y1 = cy + radio_ext * math.sin(angulo)
+                x2 = cx + radio_ext * math.cos(fin)
+                y2 = cy + radio_ext * math.sin(fin)
                 grande = int(amplitud > math.pi)
                 sectores_svg.append(
                     f'<path d="M {cx} {cy} L {x1:.2f} {y1:.2f} '
                     f'A {radio_ext} {radio_ext} 0 {grande} 1 {x2:.2f} {y2:.2f} Z" '
-                    f'fill="{color}" stroke="#151515" stroke-width="1.5"><title>{escape(nombre)}: {escape(dinero(importe))}</title></path>')
-            medio = angulo + amplitud/2
-            x1,y1 = punto(radio_ext + 3, medio)
-            x2,y2 = punto(radio_ext + 23, medio)
-            derecha = math.cos(medio) >= 0
-            etiquetas.append({
-                'lado': 'derecha' if derecha else 'izquierda',
-                'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
-                'y_obj': y2, 'texto': dinero(importe), 'nombre': nombre,
-                'color': color
-            })
-            leyenda.append(
-                f'<g><title>{escape(nombre)}: {escape(dinero(importe))}</title>'
-                f'<rect x="790" y="{85 + indice*29}" width="13" height="13" '
-                f'rx="3" fill="{color}"/>'
-                f'<text x="813" y="{96 + indice*29}" fill="#E5E7EB" '
-                f'font-size="15">{escape(nombre)}</text>'
-                + icono_svg(nombre, color, 1028, 79 + indice*29, 0.72)
+                    f'fill="{color}" stroke="#161616" stroke-width="1.5">'
+                    f'<title>{titulo}</title></path>')
+            y = 40 + indice * altura_fila
+            filas_leyenda.append(
+                f'<g><title>{titulo}</title>'
+                f'<rect x="490" y="{y-12}" width="13" height="13" rx="3" fill="{color}"/>'
+                + icono_svg(nombre, color, 514, y-17, 0.75)
+                + f'<text x="543" y="{y}" fill="#E5E7EB" font-size="15">'
+                  f'{escape(nombre)}</text>'
+                + f'<text x="1020" y="{y}" fill="#F8FAFC" font-size="15" '
+                  f'font-weight="600" text-anchor="end">{escape(dinero(importe))}</text>'
                 + '</g>')
             angulo = fin
 
-        # Evitar solapamiento vertical entre llamadas próximas.
-        for lado in ('izquierda', 'derecha'):
-            items = sorted((e for e in etiquetas if e['lado'] == lado),
-                           key=lambda e: e['y_obj'])
-            separacion = 25
-            anterior = 25 - separacion
-            for e in items:
-                e['y'] = max(e['y_obj'], anterior + separacion, 25)
-                anterior = e['y']
-            if items and items[-1]['y'] > 480:
-                desplazamiento = items[-1]['y'] - 480
-                for e in items:
-                    e['y'] -= desplazamiento
-
-        llamadas_svg = []
-        for e in etiquetas:
-            derecha = e['lado'] == 'derecha'
-            extremo = 660 if derecha else 200
-            ancla = 'start' if derecha else 'end'
-            texto_x = extremo + (7 if derecha else -7)
-            llamadas_svg.append(
-                f'<polyline points="{e["x1"]:.1f},{e["y1"]:.1f} '
-                f'{e["x2"]:.1f},{e["y2"]:.1f} {extremo},{e["y"]:.1f}" '
-                f'fill="none" stroke="{e["color"]}" stroke-width="1.5"/>'
-                f'<text x="{texto_x}" y="{e["y"]+5:.1f}" '
-                f'text-anchor="{ancla}" font-size="15" font-weight="600" '
-                f'fill="#F3F4F6">{escape(e["texto"])}</text>'
-                + icono_svg(e['nombre'], e['color'],
-                            texto_x - 27 if derecha else texto_x - 57,
-                            e['y'] - 14, 0.70))
-
+        altura_svg = max(490, 75 + len(filas_leyenda) * altura_fila)
         svg = (
             '<div style="width:100%;overflow-x:auto">'
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 510" '
-            'style="width:100%;max-width:1100px;height:auto;display:block;margin:auto" '
-            'role="img" aria-label="Gastos por categoría con importes">'
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 {altura_svg}" '
+            'style="width:100%;max-width:1050px;height:auto;display:block;margin:auto" '
+            'role="img" aria-label="Gastos por categoría e importes">'
             + ''.join(sectores_svg)
             + f'<circle cx="{cx}" cy="{cy}" r="{radio_int}" fill="#151515"/>'
             + f'<text x="{cx}" y="{cy+7}" text-anchor="middle" '
-              f'font-size="23" font-weight="bold" fill="#FFFFFF">{escape(dinero(total_pie))}</text>'
-            + ''.join(llamadas_svg) + ''.join(leyenda)
+              f'font-size="24" font-weight="bold" fill="#FFFFFF">{escape(dinero(total_pie))}</text>'
+            + ''.join(filas_leyenda)
             + '</svg></div>'
         )
-        components.html(svg, height=525, scrolling=False)
+        components.html(svg, height=altura_svg + 15, scrolling=False)
         st.caption(f'Total de gastos: **{dinero(total_pie)}**')
 
     st.subheader('Gastos del mes por categoría')
