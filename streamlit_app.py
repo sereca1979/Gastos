@@ -276,6 +276,7 @@ with tabs[0]:
             'Dani': '<circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4M9 14l3 4 3-4"/>',
             'Ropa y compras': '<path d="M4 9h16l-1 13H5L4 9zM9 10V6a3 3 0 0 1 6 0v4"/>',
             'Transporte': '<path d="M4 16 6 8h12l2 8v5h-3v-3H7v3H4v-5zM4 16h16"/>',
+            'Gasolina': '<rect x="3" y="5" width="12" height="17" rx="1"/><rect x="5" y="8" width="8" height="6"/><path d="M15 10h2l3 3v6a2 2 0 0 0 4 0v-7l-3-4M3 22h13"/>',
             'Viajes': '<path d="M3 12 21 4l-6 17-4-7-8-2zM11 14l10-10"/>',
             'Sin categoría': '<circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 0 1 6 0c0 3-3 3-3 6m0 3v1"/>'
         }
