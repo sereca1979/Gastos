@@ -250,6 +250,43 @@ def color_de(nombre):
     return colores_extra[idx % len(colores_extra)]
 
 
+trazos_iconos = {
+    'Alimentación': '<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 2h3l3 13h13l3-10H5"/>',
+    'Restaurantes y ocio': '<path d="M4 2v8m4-8v8m-4-4h4m-2 4v12M16 2c-4 4-4 11 0 12h3V2m0 12v8"/>',
+    'Vivienda': '<path d="m2 11 10-9 10 9M4 10v12h16V10M9 22v-8h6v8"/>',
+    'Suministros': '<path d="M9 18h6m-5 3h4M9 15c-7-5-3-13 3-13s10 8 3 13l-1 3h-4z"/>',
+    'Coche y Transportes': '<path d="M4 16 6 8h12l2 8v5h-3v-3H7v3H4v-5zM4 16h16M6 8l2-4h8l2 4"/><circle cx="7.5" cy="15" r="1"/><circle cx="16.5" cy="15" r="1"/>',
+    'Salud': '<path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/>',
+    'Ropa y compras': '<path d="M4 9h16l-1 13H5L4 9zM9 10V6a3 3 0 0 1 6 0v4"/>',
+    'Seguros e impuestos': '<path d="m12 2 9 4v6c0 6-4 9-9 11-5-2-9-5-9-11V6z"/>',
+    'Regalos y donaciones': '<rect x="3" y="9" width="18" height="13" rx="1"/><path d="M2 9h20M12 9v13M12 9C3 9 5 2 9 3c2 0 3 3 3 6zm0 0c9 0 7-7 3-6-2 0-3 3-3 6z"/>',
+    'Otros gastos': '<path d="M3 7 12 2l9 5v11l-9 5-9-5zM3 7l9 5 9-5m-9 5v11"/>',
+    'Compras': '<path d="M3 7h18l-1.5 14h-15zM8 8V6a4 4 0 0 1 8 0v2"/>',
+    'Colegio': '<path d="m2 9 10-6 10 6-10 6zM6 12v6c4 3 8 3 12 0v-6M22 9v8"/>',
+    'Loterías': '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h3M16 15l2 2"/>',
+    'Dani': '<circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4M9 14l3 4 3-4"/>',
+    'Ropa y compras': '<path d="M4 9h16l-1 13H5L4 9zM9 10V6a3 3 0 0 1 6 0v4"/>',
+    'Transporte': '<path d="M4 16 6 8h12l2 8v5h-3v-3H7v3H4v-5zM4 16h16"/>',
+    'Gasolina': '<rect x="3" y="5" width="12" height="17" rx="1"/><rect x="5" y="8" width="8" height="6"/><path d="M15 10h2l3 3v6a2 2 0 0 0 4 0v-7l-3-4M3 22h13"/>',
+    'Viajes': '<path d="M3 12 21 4l-6 17-4-7-8-2zM11 14l10-10"/>',
+    'Sin categoría': '<circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 0 1 6 0c0 3-3 3-3 6m0 3v1"/>'
+}
+def icono_svg(nombre, color, x, y, escala=1):
+    trazos = trazos_iconos.get(nombre, trazos_iconos['Sin categoría'])
+    return (f'<g transform="translate({x},{y}) scale({escala})" '
+            f'fill="none" stroke="{color}" stroke-width="2" '
+            f'stroke-linecap="round" stroke-linejoin="round">{trazos}</g>')
+
+def icono_categoria_html(nombre):
+    from html import escape
+    color = color_de(nombre)
+    trazos = trazos_iconos.get(nombre, trazos_iconos['Sin categoría'])
+    return (f'<svg viewBox="0 0 24 24" width="19" height="19" '
+            f'style="display:inline-block;vertical-align:-4px;margin-right:8px;flex-shrink:0" '
+            f'fill="none" stroke="{color}" stroke-width="2" '
+            f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            f'{trazos}</svg><span>{escape(nombre)}</span>')
+
 tabs = st.tabs(['Resumen', 'Presupuestos', 'Movimientos', 'Configuración', 'Importar extractos'])
 
 def indicador_financiero(titulo, valor, tipo):
@@ -294,32 +331,6 @@ with tabs[0]:
             st.info('No hay gastos registrados en este periodo.')
             return
         # Iconos vectoriales monocromos: heredan exactamente el color del sector.
-        trazos_iconos = {
-            'Alimentación': '<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 2h3l3 13h13l3-10H5"/>',
-            'Restaurantes y ocio': '<path d="M4 2v8m4-8v8m-4-4h4m-2 4v12M16 2c-4 4-4 11 0 12h3V2m0 12v8"/>',
-            'Vivienda': '<path d="m2 11 10-9 10 9M4 10v12h16V10M9 22v-8h6v8"/>',
-            'Suministros': '<path d="M9 18h6m-5 3h4M9 15c-7-5-3-13 3-13s10 8 3 13l-1 3h-4z"/>',
-            'Coche y Transportes': '<path d="M4 16 6 8h12l2 8v5h-3v-3H7v3H4v-5zM4 16h16M6 8l2-4h8l2 4"/><circle cx="7.5" cy="15" r="1"/><circle cx="16.5" cy="15" r="1"/>',
-            'Salud': '<path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/>',
-            'Ropa y compras': '<path d="M4 9h16l-1 13H5L4 9zM9 10V6a3 3 0 0 1 6 0v4"/>',
-            'Seguros e impuestos': '<path d="m12 2 9 4v6c0 6-4 9-9 11-5-2-9-5-9-11V6z"/>',
-            'Regalos y donaciones': '<rect x="3" y="9" width="18" height="13" rx="1"/><path d="M2 9h20M12 9v13M12 9C3 9 5 2 9 3c2 0 3 3 3 6zm0 0c9 0 7-7 3-6-2 0-3 3-3 6z"/>',
-            'Otros gastos': '<path d="M3 7 12 2l9 5v11l-9 5-9-5zM3 7l9 5 9-5m-9 5v11"/>',
-            'Compras': '<path d="M3 7h18l-1.5 14h-15zM8 8V6a4 4 0 0 1 8 0v2"/>',
-            'Colegio': '<path d="m2 9 10-6 10 6-10 6zM6 12v6c4 3 8 3 12 0v-6M22 9v8"/>',
-            'Loterías': '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h3M16 15l2 2"/>',
-            'Dani': '<circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4M9 14l3 4 3-4"/>',
-            'Ropa y compras': '<path d="M4 9h16l-1 13H5L4 9zM9 10V6a3 3 0 0 1 6 0v4"/>',
-            'Transporte': '<path d="M4 16 6 8h12l2 8v5h-3v-3H7v3H4v-5zM4 16h16"/>',
-            'Gasolina': '<rect x="3" y="5" width="12" height="17" rx="1"/><rect x="5" y="8" width="8" height="6"/><path d="M15 10h2l3 3v6a2 2 0 0 0 4 0v-7l-3-4M3 22h13"/>',
-            'Viajes': '<path d="M3 12 21 4l-6 17-4-7-8-2zM11 14l10-10"/>',
-            'Sin categoría': '<circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 0 1 6 0c0 3-3 3-3 6m0 3v1"/>'
-        }
-        def icono_svg(nombre, color, x, y, escala=1):
-            trazos = trazos_iconos.get(nombre, trazos_iconos['Sin categoría'])
-            return (f'<g transform="translate({x},{y}) scale({escala})" '
-                    f'fill="none" stroke="{color}" stroke-width="2" '
-                    f'stroke-linecap="round" stroke-linejoin="round">{trazos}</g>')
         datos_pie = pd.DataFrame([{'Categoría': k, 'Importe': v}
                                   for k, v in por_categoria.items() if v > 0])
         datos_pie = datos_pie.sort_values('Importe', ascending=False).reset_index(drop=True)
@@ -779,11 +790,7 @@ with tabs[1]:
             for cat in cats_gasto:
                 anterior = presup_por_mes.get((mes_edicion, str(cat['id'])))
                 importe_anterior = float(anterior['importe']) if anterior else 0.0
-                st.markdown(
-                    f'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;'
-                    f'background:{color_de(cat["nombre"])};margin-right:7px"></span>'
-                    f'<span>{__import__("html").escape(cat["nombre"])}</span>',
-                    unsafe_allow_html=True)
+                st.markdown(icono_categoria_html(cat['nombre']), unsafe_allow_html=True)
                 nuevos_presupuestos[str(cat['id'])] = st.number_input(
                     'Presupuesto mensual', label_visibility='collapsed', min_value=0.0,
                     value=importe_anterior, step=10.0, format='%.2f',
@@ -865,7 +872,7 @@ with tabs[1]:
                     domain=colores_detalle, range=[color_de(c) for c in colores_detalle]), legend=None),
                 opacity=alt.Opacity('Tipo:N', scale=alt.Scale(
                     domain=['Presupuesto', 'Gasto real'], range=[1.0, 0.48]),
-                    legend=alt.Legend(title='Barra sólida: presupuesto · clara: gasto real')),
+                    legend=None),
                 tooltip=['Categoría:N', 'Tipo:N', alt.Tooltip('Euros:Q', format=',.2f')]
             ).properties(height=320)
             st.caption('Cada categoría utiliza el mismo color que en los gráficos circulares. Barra sólida: presupuesto; barra clara: gasto real.')
