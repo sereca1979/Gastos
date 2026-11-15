@@ -8,6 +8,10 @@ import unicodedata
 from datetime import date
 from decimal import Decimal
 from supabase import create_client
+# Compatibilidad con streamlit-cookies-manager en Streamlit reciente.
+# La librería aún utiliza el decorador st.cache, retirado de Streamlit.
+if not hasattr(st, 'cache'):
+    st.cache = st.cache_resource
 from streamlit_cookies_manager import EncryptedCookieManager
 from importadores import ibercaja, trade_republic, huellas
 
