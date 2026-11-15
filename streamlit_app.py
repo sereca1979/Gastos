@@ -653,7 +653,11 @@ with tabs[1]:
             opciones = ['Sin categoría'] + sorted(c['nombre'] for c in categorias if c['tipo'] == tipo_tabla)
             filas = pd.DataFrame([{
                 'Fecha': lote_tabla[i]['fecha'], 'Concepto': lote_tabla[i]['concepto'],
-                'Importe (€)': float(lote_tabla[i]['importe']),
+                'Importe (€)': (
+                    ('🔴 ' if tipo_tabla == 'gasto' else '🟢 ' if tipo_tabla == 'ingreso' else '⚪ ')
+                    + f"{float(lote_tabla[i]['importe']):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+                    + ' €'
+                ),
                 'Excluir del balance': bool(lote_tabla[i].get('excluir_balance', False)),
                 'Categoría': nombres_categorias.get(lote_tabla[i].get('categoria_id'), 'Sin categoría')
             } for i in indices])
