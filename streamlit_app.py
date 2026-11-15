@@ -262,6 +262,20 @@ with tabs[0]:
         paleta = ['#2D76C8', '#78BFFA', '#34A88B', '#F0A75A', '#C86A9C',
                   '#9D8AE0', '#E17C72', '#7CBF76', '#D9BA52', '#6FADB6',
                   '#A3A8B0', '#C0A0D8']
+        # Colores fijos por nombre, independientes del importe y del mes.
+        colores_categorias = {
+            'Alimentación': '#2D76C8',
+            'Restaurantes y ocio': '#F0A75A',
+            'Vivienda': '#34A88B',
+            'Suministros': '#D9BA52',
+            'Coche y Transportes': '#78BFFA',
+            'Salud': '#C86A9C',
+            'Ropa y compras': '#9D8AE0',
+            'Seguros e impuestos': '#6FADB6',
+            'Regalos y donaciones': '#E17C72',
+            'Otros gastos': '#7CBF76',
+            'Sin categoría': '#A3A8B0',
+        }
         cx, cy, radio_ext, radio_int = 430, 250, 145, 85
         angulo = -math.pi / 2
         sectores_svg = []
@@ -272,7 +286,7 @@ with tabs[0]:
             importe = float(fila['Importe'])
             amplitud = 2 * math.pi * importe / total_pie
             fin = angulo + amplitud
-            color = paleta[indice % len(paleta)]
+            color = colores_categorias.get(nombre, '#C0A0D8')
             # Arcos de más de media circunferencia necesitan large-arc-flag.
             def punto(r, theta):
                 return (cx + r * math.cos(theta), cy + r * math.sin(theta))
