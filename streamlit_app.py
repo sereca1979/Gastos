@@ -654,7 +654,7 @@ with tabs[1]:
             filas = pd.DataFrame([{
                 'Fecha': lote_tabla[i]['fecha'], 'Concepto': lote_tabla[i]['concepto'],
                 'Importe (€)': (
-                    ('🟥 ' if tipo_tabla == 'gasto' else '🟩 ' if tipo_tabla == 'ingreso' else '▫️ ')
+                    ('🔴 ' if tipo_tabla == 'gasto' else '🟢 ' if tipo_tabla == 'ingreso' else '⚪ ')
                     + f"{float(lote_tabla[i]['importe']):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
                     + ' €'
                 ),
