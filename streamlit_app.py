@@ -622,6 +622,109 @@ with tabs[0]:
     mostrar_quesito(str(ano), 'anual')
 
     # Avisos automáticos: solo datos del usuario autenticado, sin servicios externos.
+    # Análisis de periodos y recurrencias, antes de las alertas (que permanecen al final).
+    st.subheader('Comparador de periodos')
+    st.caption('Compara meses o años completos o en curso. Los importes corresponden a gastos netos por categoría.')
+    modo_comparar = st.radio('Periodo', ['Meses', 'Años'], horizontal=True, key='modo_comparar')
+    claves_periodo = sorted({str(m['fecha'])[:7 if modo_comparar == 'Meses' else 4]
+                             for m in movimientos}, reverse=True)
+    if len(claves_periodo) >= 2:
+        cpa, cpb = st.columns(2)
+        periodo_a = cpa.selectbox('Periodo A', claves_periodo, index=0, key='periodo_a')
+        periodo_b = cpb.selectbox('Periodo B', claves_periodo, index=1, key='periodo_b')
+        def gasto_neto_periodo(clave):
+            resultado = {}
+            for mov in movimientos:
+                if es_excluido(mov) or not str(mov.get('fecha', '')).startswith(clave):
+                    continue
+                nombre = categoria_movimiento(mov)
+                if mov['tipo'] == 'gasto':
+                    resultado[nombre] = resultado.get(nombre, Decimal('0')) + Decimal(str(mov['importe']))
+                elif mov['tipo'] == 'ingreso' and nombre in CATEGORIAS_COMPENSACION:
+                    resultado[nombre] = resultado.get(nombre, Decimal('0')) - Decimal(str(mov['importe']))
+            return resultado
+        ga, gb = gasto_neto_periodo(periodo_a), gasto_neto_periodo(periodo_b)
+        filas_comp = []
+        for nombre in sorted(set(ga) | set(gb)):
+            a, b = ga.get(nombre, Decimal('0')), gb.get(nombre, Decimal('0'))
+            if a == 0 and b == 0:
+                continue
+            filas_comp.append({'Categoría': nombre, periodo_a: float(a), periodo_b: float(b),
+                               'Diferencia (€)': float(a-b),
+                               'Variación (%)': float((a-b)/abs(b)*100) if b else None})
+        if filas_comp:
+            df_comp = pd.DataFrame(filas_comp)
+            largo_comp = df_comp.melt(id_vars=['Categoría'], value_vars=[periodo_a, periodo_b],
+                                      var_name='Periodo', value_name='Euros') if periodo_a != periodo_b else None
+            if largo_comp is not None:
+                dominio = sorted(df_comp['Categoría'].unique())
+                graf_comp = alt.Chart(largo_comp).mark_bar().encode(
+                    x=alt.X('Categoría:N', title=None, axis=alt.Axis(labelAngle=-35)),
+                    xOffset=alt.XOffset('Periodo:N'), y=alt.Y('Euros:Q', title='Euros'),
+                    color=alt.Color('Categoría:N', scale=alt.Scale(domain=dominio,
+                        range=[color_de(x) for x in dominio]), legend=None),
+                    opacity=alt.Opacity('Periodo:N', scale=alt.Scale(domain=[periodo_a, periodo_b],
+                        range=[1, .45]), legend=None),
+                    tooltip=['Categoría:N', 'Periodo:N', alt.Tooltip('Euros:Q', format=',.2f')]
+                ).properties(height=320)
+                st.altair_chart(graf_comp, use_container_width=True)
+            st.caption('Diferencia = periodo A menos periodo B. Un valor positivo significa más gasto. '
+                       'La variación no se calcula si el periodo B tiene gasto cero.')
+            st.dataframe(df_comp, hide_index=True, use_container_width=True,
+                column_config={'Diferencia (€)': st.column_config.NumberColumn(format='%.2f €'),
+                               'Variación (%)': st.column_config.NumberColumn(format='%.1f %%')})
+        else:
+            st.info('No hay gastos para los periodos elegidos.')
+    else:
+        st.caption('Se necesitan al menos dos periodos con movimientos para comparar.')
+
+    st.subheader('Gastos recurrentes detectados')
+    st.caption('Posibles pagos repetidos: mismo concepto normalizado, importes similares y presencia '
+               'en al menos tres meses diferentes. No se generan movimientos automáticos.')
+    def concepto_recurrente(texto):
+        texto = unicodedata.normalize('NFKD', str(texto or '').upper())
+        texto = ''.join(c for c in texto if not unicodedata.combining(c))
+        texto = re.sub(r'\b\d{2,}\b', ' ', texto)
+        texto = re.sub(r'[^A-Z ]', ' ', texto)
+        return ' '.join(texto.split())[:90]
+    grupos_recurrentes = {}
+    for mov in movimientos:
+        if mov['tipo'] != 'gasto' or es_excluido(mov):
+            continue
+        clave = concepto_recurrente(mov.get('concepto'))
+        if len(clave) < 4:
+            continue
+        grupos_recurrentes.setdefault(clave, []).append(mov)
+    recurrentes = []
+    for clave, grupo in grupos_recurrentes.items():
+        por_mes = {}
+        for mov in grupo:
+            por_mes.setdefault(str(mov['fecha'])[:7], []).append(float(mov['importe']))
+        # Evitar confundir compras frecuentes en un mismo comercio con suscripciones.
+        if len(por_mes) < 3 or any(len(v) != 1 for v in por_mes.values()):
+            continue
+        import statistics
+        valores = [v[0] for v in por_mes.values()]
+        mediana = statistics.median(valores)
+        if mediana <= 0 or max(abs(v-mediana) for v in valores) > max(2, mediana*.10):
+            continue
+        meses_ordenados = sorted(por_mes)
+        def indice_mes(x): return int(x[:4])*12 + int(x[5:7])
+        intervalos = [indice_mes(b)-indice_mes(a) for a,b in zip(meses_ordenados,meses_ordenados[1:])]
+        if not intervalos or max(intervalos) > 2:
+            continue
+        recurrentes.append({'Concepto': grupo[0]['concepto'], 'Categoría': categoria_movimiento(grupo[0]),
+                            'Importe habitual (€)': round(mediana,2), 'Meses detectados': len(por_mes),
+                            'Último mes': meses_ordenados[-1], 'Coste anual estimado (€)': round(mediana*12,2)})
+    if recurrentes:
+        st.dataframe(pd.DataFrame(recurrentes).sort_values('Coste anual estimado (€)', ascending=False),
+                     hide_index=True, use_container_width=True,
+                     column_config={'Importe habitual (€)': st.column_config.NumberColumn(format='%.2f €'),
+                                    'Coste anual estimado (€)': st.column_config.NumberColumn(format='%.2f €')})
+        st.caption('Detección orientativa; verifica cada pago antes de considerarlo una suscripción.')
+    else:
+        st.info('Todavía no se han identificado pagos mensuales recurrentes con suficiente historial.')
+
     st.subheader('Alertas y oportunidades de ahorro')
     import calendar
     from datetime import datetime
@@ -774,12 +877,32 @@ with tabs[2]:
 
     st.subheader('Histórico de movimientos')
     if movimientos:
+        with st.expander('Buscar y filtrar movimientos', expanded=False):
+            busqueda = st.text_input('Buscar por concepto o comercio', key='buscar_movimientos')
+            cf1, cf2 = st.columns(2)
+            tipos_filtro = cf1.multiselect('Tipo', ['gasto', 'ingreso', 'transferencia'], key='filtro_tipos_mov')
+            cats_filtro = cf2.multiselect('Categorías', sorted({categoria_movimiento(m) for m in movimientos}), key='filtro_cats_mov')
+            cf3, cf4 = st.columns(2)
+            desde = cf3.date_input('Desde', value=date.fromisoformat(min(str(m['fecha'])[:10] for m in movimientos)), key='filtro_desde_mov')
+            hasta = cf4.date_input('Hasta', value=date.today(), key='filtro_hasta_mov')
+            cf5, cf6 = st.columns(2)
+            minimo = cf5.number_input('Importe mínimo (€)', min_value=0.0, value=0.0, key='filtro_min_mov')
+            maximo = cf6.number_input('Importe máximo (€; 0 = sin límite)', min_value=0.0, value=0.0, key='filtro_max_mov')
+        def coincide_filtro_mov(m):
+            importe_m = abs(float(m.get('importe') or 0))
+            return (busqueda.casefold() in str(m.get('concepto') or '').casefold()
+                    and (not tipos_filtro or m['tipo'] in tipos_filtro)
+                    and (not cats_filtro or categoria_movimiento(m) in cats_filtro)
+                    and desde.isoformat() <= str(m['fecha'])[:10] <= hasta.isoformat()
+                    and importe_m >= minimo and (maximo == 0 or importe_m <= maximo))
+        movimientos_filtrados = [m for m in movimientos if coincide_filtro_mov(m)]
+        st.caption(f'{len(movimientos_filtrados)} movimientos encontrados. Puedes editar sus categorías en la tabla.')
         st.caption('Modifica la categoría directamente en la tabla y pulsa «Guardar categorías». '
                    'Los cambios también se recordarán para próximas importaciones.')
         tamano_tabla = st.selectbox('Movimientos por página', [25, 50, 100, 250], index=1)
-        total_paginas = max(1, (len(movimientos) + tamano_tabla - 1) // tamano_tabla)
+        total_paginas = max(1, (len(movimientos_filtrados) + tamano_tabla - 1) // tamano_tabla)
         pagina_tabla = st.number_input('Página', min_value=1, max_value=total_paginas, value=1, step=1)
-        lote_tabla = movimientos[(pagina_tabla-1)*tamano_tabla:pagina_tabla*tamano_tabla]
+        lote_tabla = movimientos_filtrados[(pagina_tabla-1)*tamano_tabla:pagina_tabla*tamano_tabla]
         mapa_tipo = {(c['tipo'], c['nombre']): c['id'] for c in categorias}
         cambios_por_guardar = []
         for tipo_tabla in ('gasto', 'ingreso', 'transferencia'):
@@ -842,8 +965,8 @@ with tabs[2]:
         st.caption('Para cambiar fecha, concepto, importe o eliminar un movimiento, utiliza la edición individual.')
         opciones_mov = {f"{m['fecha']} · {m['concepto']} · {dinero(m['importe'])} · {m['id'][:8]}": m for m in movimientos}
         with st.expander('Editar o eliminar un movimiento'):
-            elegido = st.selectbox('Movimiento', list(opciones_mov))
-            actual = opciones_mov[elegido]
+            elegido = st.selectbox('Movimiento', list(opciones_mov)) if opciones_mov else None
+            actual = opciones_mov[elegido] if elegido else None
             with st.form('editar_movimiento'):
                 nueva_fecha = st.date_input('Fecha', value=date.fromisoformat(actual['fecha']), key='edit_fecha')
                 nuevo_tipo = st.selectbox('Tipo', ['gasto', 'ingreso', 'transferencia'],
