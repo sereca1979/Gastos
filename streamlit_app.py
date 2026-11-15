@@ -316,10 +316,13 @@ with tabs[0]:
             color = color_de(nombre)
             amplitud = 2 * math.pi * importe / total_pie
             fin = angulo + amplitud
-            titulo = f'{escape(nombre)}: {escape(dinero(importe))}'
+            porcentaje = 100 * importe / total_pie
+            titulo = f'{escape(nombre)}: {escape(dinero(importe))} ({porcentaje:.1f} %)'
+            tooltip_attr = f'data-tooltip="{titulo}" style="cursor:pointer"'
+
             if amplitud >= 2 * math.pi - 1e-6:
                 sectores_svg.append(
-                    f'<circle cx="{cx}" cy="{cy}" r="{radio_ext}" fill="{color}">'
+                    f'<circle cx="{cx}" cy="{cy}" r="{radio_ext}" fill="{color}" {tooltip_attr}>'
                     f'<title>{titulo}</title></circle>')
             else:
                 x1 = cx + radio_ext * math.cos(angulo)
@@ -330,24 +333,24 @@ with tabs[0]:
                 sectores_svg.append(
                     f'<path d="M {cx} {cy} L {x1:.2f} {y1:.2f} '
                     f'A {radio_ext} {radio_ext} 0 {grande} 1 {x2:.2f} {y2:.2f} Z" '
-                    f'fill="{color}" stroke="#161616" stroke-width="1.5">'
+                    f'fill="{color}" stroke="#161616" stroke-width="1.5" {tooltip_attr}>'
                     f'<title>{titulo}</title></path>')
             y = 40 + indice * altura_fila
             filas_leyenda.append(
-                f'<g><title>{titulo}</title>'
+                f'<g {tooltip_attr}><title>{titulo}</title>'
                 f'<rect x="490" y="{y-12}" width="13" height="13" rx="3" fill="{color}"/>'
                 + icono_svg(nombre, color, 514, y-17, 0.75)
                 + f'<text x="543" y="{y}" fill="#E5E7EB" font-size="15">'
                   f'{escape(nombre)}</text>'
-                + f'<text x="1020" y="{y}" fill="#F8FAFC" font-size="15" '
-                  f'font-weight="600" text-anchor="end">{escape(dinero(importe))}</text>'
+                + f'<text x="760" y="{y}" fill="#F8FAFC" font-size="15" '
+                  f'font-weight="600" text-anchor="start">{escape(dinero(importe))} ({porcentaje:.1f} %)</text>'
                 + '</g>')
             angulo = fin
 
         altura_svg = max(490, 75 + len(filas_leyenda) * altura_fila)
         svg = (
             '<div style="width:100%;overflow-x:auto">'
-            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 {altura_svg}" '
+            f'<svg id="pie-{clave}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1050 {altura_svg}" '
             'style="width:100%;max-width:1050px;height:auto;display:block;margin:auto" '
             'role="img" aria-label="Gastos por categoría e importes">'
             + ''.join(sectores_svg)
@@ -355,7 +358,32 @@ with tabs[0]:
             + f'<text x="{cx}" y="{cy+7}" text-anchor="middle" '
               f'font-size="24" font-weight="bold" fill="#FFFFFF">{escape(dinero(total_pie))}</text>'
             + ''.join(filas_leyenda)
-            + '</svg></div>'
+            + '</svg>'
+            + '<div id="tooltip" style="display:none;position:fixed;z-index:9999;'
+              'pointer-events:none;background:#27272a;color:white;border:1px solid #71717a;'
+              'border-radius:6px;padding:8px 11px;font:14px sans-serif;'
+              'box-shadow:0 3px 15px #0009;white-space:nowrap"></div>'
+            + '</div>'
+            + '''<script>
+              (function(){
+                const tip=document.getElementById("tooltip");
+                const svg=document.querySelector("svg[role=img]");
+                if(!svg||!tip)return;
+                const targets=svg.querySelectorAll("[data-tooltip]");
+                targets.forEach(el=>{
+                  el.addEventListener("pointerenter",ev=>{
+                    tip.textContent=el.getAttribute("data-tooltip");
+                    tip.style.display="block";
+                  });
+                  el.addEventListener("pointermove",ev=>{
+                    const w=tip.offsetWidth,h=tip.offsetHeight;
+                    tip.style.left=Math.max(4,Math.min(ev.clientX+14,innerWidth-w-4))+"px";
+                    tip.style.top=Math.max(4,Math.min(ev.clientY+12,innerHeight-h-4))+"px";
+                  });
+                  el.addEventListener("pointerleave",()=>{tip.style.display="none"});
+                });
+              })();
+              </script>'''
         )
         components.html(svg, height=altura_svg + 15, scrolling=False)
         st.caption(f'Total de gastos: **{dinero(total_pie)}**')
