@@ -215,7 +215,7 @@ def importes_balance(registros):
 
 
 st.info('Histórico visible desde el 1 de septiembre de 2026. Los datos anteriores siguen conservados en Supabase.')
-tabs = st.tabs(['Resumen', 'Movimientos', 'Categorías', 'Importar extractos'])
+tabs = st.tabs(['Resumen', 'Movimientos', 'Configuración', 'Importar extractos'])
 
 def indicador_financiero(titulo, valor, tipo):
     """Indicador con etiqueta discreta y cifra destacada por signo económico."""
@@ -944,7 +944,7 @@ with tabs[3]:
                                 st.caption(f"Manual: {m['fecha']} · {m['importe']} € · "
                                            f"{m['concepto']}")
 
-                st.caption('Revisa especialmente las filas con «Revisar». Las categorías pueden cambiarse antes de guardar. Para asignarlas, créalas primero en la pestaña Categorías.')
+                st.caption('Revisa especialmente las filas con «Revisar». Las categorías pueden cambiarse antes de guardar. Para asignarlas, créalas primero en la pestaña Configuración.')
                 st.caption('Desmarca los movimientos que no quieras importar. Una transferencia conservada como transferencia no cuenta para el ahorro.')
                 if st.button('Guardar movimientos seleccionados', type='primary'):
                     pendientes_transferencias = [
