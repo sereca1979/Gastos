@@ -250,7 +250,7 @@ def color_de(nombre):
     return colores_extra[idx % len(colores_extra)]
 
 
-tabs = st.tabs(['Resumen', 'Movimientos', 'Presupuestos', 'Configuración', 'Importar extractos'])
+tabs = st.tabs(['Resumen', 'Presupuestos', 'Movimientos', 'Configuración', 'Importar extractos'])
 
 def indicador_financiero(titulo, valor, tipo):
     """Indicador con etiqueta discreta y cifra destacada por signo económico."""
@@ -610,7 +610,7 @@ with tabs[0]:
     st.subheader('Gastos del año por categoría')
     mostrar_quesito(str(ano), 'anual')
 
-with tabs[1]:
+with tabs[2]:
     st.subheader('Nuevo movimiento')
     with st.form('nuevo_movimiento', clear_on_submit=True):
         fecha = st.date_input('Fecha', value=date.today())
@@ -747,7 +747,7 @@ with tabs[1]:
                     st.error('No se pudo eliminar el movimiento.')
 
 
-with tabs[2]:
+with tabs[1]:
     st.subheader('Presupuestos mensuales')
     st.caption('Selecciona un mes y define los presupuestos solo para las categorías que quieras controlar. Cada mes conserva sus propios importes.')
     try:
