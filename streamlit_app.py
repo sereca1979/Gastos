@@ -1,4 +1,6 @@
 import streamlit as st
+from difflib import SequenceMatcher
+from datetime import timedelta
 import pandas as pd
 import altair as alt
 import re
@@ -825,6 +827,46 @@ with tabs[3]:
             nuevos = [m for m in leidos if m['huella'] not in existentes]
             st.write(f'Leídos: **{len(leidos)}** · Ya importados: **{len(leidos)-len(nuevos)}** · Nuevos: **{len(nuevos)}**')
             if nuevos:
+                # Buscar posibles coincidencias con entradas manuales existentes.
+                # El importe y tipo deben ser iguales; la fecha admite +/- 7 días.
+                manuales = [m for m in movimientos if m.get('origen') == 'manual'
+                           and m.get('tipo') in ('gasto', 'ingreso')]
+                def coincidencias_manuales(nuevo):
+                    if nuevo['tipo'] not in ('gasto', 'ingreso'):
+                        return []
+                    try:
+                        fecha_n = date.fromisoformat(str(nuevo['fecha'])[:10])
+                        importe_n = Decimal(str(nuevo['importe'])).quantize(Decimal('0.01'))
+                    except (ValueError, ArithmeticError):
+                        return []
+                    candidatos = []
+                    for manual in manuales:
+                        if manual['tipo'] != nuevo['tipo']:
+                            continue
+                        if Decimal(str(manual['importe'])).quantize(Decimal('0.01')) != importe_n:
+                            continue
+                        try:
+                            dias = abs((date.fromisoformat(str(manual['fecha'])[:10]) - fecha_n).days)
+                        except ValueError:
+                            continue
+                        if dias > 7:
+                            continue
+                        similitud = SequenceMatcher(
+                            None, clave_aprendizaje(str(nuevo['concepto'])),
+                            clave_aprendizaje(str(manual['concepto']))).ratio()
+                        candidatos.append((dias, -similitud, manual))
+                    candidatos.sort(key=lambda t: (t[0], t[1]))
+                    return [m for _, _, m in candidatos]
+
+                coincidencias = {i: coincidencias_manuales(m)
+                                 for i, m in enumerate(nuevos)}
+                coincidencias = {i: c for i, c in coincidencias.items() if c}
+                if coincidencias:
+                    st.warning(
+                        f'Hay {len(coincidencias)} movimientos del banco con posibles '
+                        'coincidencias manuales. Confirma cada uno antes de importar. '
+                        'La comparación utiliza tipo, importe exacto y fecha cercana (±7 días); '
+                        'el concepto ayuda a ordenar las coincidencias.')
                 categorias_por_tipo = {tipo: {c['nombre']: c['id'] for c in categorias if c['tipo'] == tipo}
                                        for tipo in ('gasto', 'ingreso')}
                 reglas_guardadas = st.session_state.cliente.table('reglas_categorias').select(
@@ -843,6 +885,7 @@ with tabs[3]:
                     'Concepto': m['concepto'], 'Importe (€)': float(m['importe']),
                     'Tipo': m['tipo'],
                     'Excluir del balance': False,
+                    'Coincidencia manual': ('Revisar' if i in coincidencias else 'Sin coincidencia'),
                     'Categoría': sugerencias[i][0] if sugerencias[i][0] in categorias_por_tipo.get(m['tipo'], {}) else 'Sin categoría',
                     'Revisión': sugerencias[i][1], 'Aviso': m['observacion']
                 } for i, m in enumerate(nuevos)])
@@ -863,17 +906,46 @@ with tabs[3]:
                         parte, hide_index=True, use_container_width=True,
                         disabled=['Fecha', 'Banco', 'Concepto', 'Importe (€)', 'Aviso',
                                   'Revisión', 'Tipo'],
-                        column_config={'Categoría': st.column_config.SelectboxColumn(
-                            'Categoría', options=opciones, required=True)},
+                        column_config={
+                            'Categoría': st.column_config.SelectboxColumn(
+                                'Categoría', options=opciones, required=True),
+                            'Coincidencia manual': st.column_config.SelectboxColumn(
+                                'Coincidencia manual',
+                                options=['Sin coincidencia', 'Revisar',
+                                         'Es el mismo: no importar',
+                                         'Es distinto: importar'],
+                                required=True),
+                        },
                         key=f'revision_importacion_{firma_archivo[3]}_{tipo_import}_v2')
                     revisiones.append(editada)
                 revisado = pd.concat(revisiones).sort_index() if revisiones else filas
+                if coincidencias:
+                    with st.expander('Ver posibles duplicados manuales', expanded=True):
+                        for i, candidatos in coincidencias.items():
+                            n = nuevos[i]
+                            st.write(f"**Banco:** {n['fecha']} · {n['tipo']} · "
+                                     f"{n['importe']} € · {n['concepto']}")
+                            for m in candidatos[:3]:
+                                st.caption(f"Manual: {m['fecha']} · {m['importe']} € · "
+                                           f"{m['concepto']}")
+
                 st.caption('Revisa especialmente las filas con «Revisar». Las categorías pueden cambiarse antes de guardar. Para asignarlas, créalas primero en la pestaña Categorías.')
                 st.caption('Desmarca los movimientos que no quieras importar. Las transferencias no cuentan para el ahorro.')
                 if st.button('Guardar movimientos seleccionados', type='primary'):
+                    pendientes = [
+                        i for i, fila in revisado.iterrows()
+                        if i in coincidencias and bool(fila['Incluir'])
+                        and fila['Coincidencia manual'] == 'Revisar'
+                    ]
+                    if pendientes:
+                        st.error(f'Confirma las {len(pendientes)} coincidencias pendientes '
+                                 'en la columna «Coincidencia manual».')
+                        st.stop()
                     elegidos = []
                     for i, fila in revisado.iterrows():
-                        if not bool(fila['Incluir']):
+                        if not bool(fila['Incluir']) or (
+                            fila['Coincidencia manual'] == 'Es el mismo: no importar'
+                        ):
                             continue
                         m = nuevos[i]
                         categoria_nombre = fila['Categoría']
@@ -903,7 +975,9 @@ with tabs[3]:
                             # Aprender únicamente de filas confirmadas y categorías válidas.
                             reglas_nuevas = {}
                             for i, fila in revisado.iterrows():
-                                if not bool(fila['Incluir']) or fila['Tipo'] not in ('gasto', 'ingreso'):
+                                if (not bool(fila['Incluir'])
+                                    or fila['Coincidencia manual'] == 'Es el mismo: no importar'
+                                    or fila['Tipo'] not in ('gasto', 'ingreso')):
                                     continue
                                 categoria_id = categorias_por_tipo.get(fila['Tipo'], {}).get(fila['Categoría'])
                                 if categoria_id:
