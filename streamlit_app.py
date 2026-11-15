@@ -14,8 +14,8 @@ st.set_page_config(page_title='Control de gastos', page_icon='📊', layout='wid
 st.markdown('''
 <style>
 @media (max-width: 700px) {
-  .st-key-graficas_escritorio {display:none !important;}
-  .st-key-graficas_movil {display:block !important;}
+  .st-key-graficas_escritorio, [class*="st-key-quesito_escritorio_"] {display:none !important;}
+  .st-key-graficas_movil, [class*="st-key-quesito_movil_"] {display:block !important;}
   [data-testid="stMainBlockContainer"] {padding-left: .65rem; padding-right: .65rem; padding-top: 1rem;}
   [data-testid="stMainBlockContainer"] h1 {font-size:1.65rem;}
   [data-testid="stMainBlockContainer"] h2,
@@ -34,7 +34,7 @@ st.markdown('''
 
 }
 @media (min-width: 701px) {
-  .st-key-graficas_movil {display:none !important;}
+  .st-key-graficas_movil, [class*="st-key-quesito_movil_"] {display:none !important;}
 }
 </style>
 ''', unsafe_allow_html=True)
@@ -447,7 +447,6 @@ with tabs[0]:
             '.leyenda-fila .importe{text-align:right;white-space:nowrap;font-weight:600}'
             '.leyenda-fila small{color:#aaa;font-size:11px}'
             '</style>'
-            '<div class="vista-escritorio">' + svg + '</div>'
             '<div class="vista-movil">' + donut_movil + ''.join(leyenda_movil) + '</div>'
         )
         # Reutilizamos el manejador de tooltip y lo adaptamos a toque.
@@ -473,8 +472,13 @@ with tabs[0]:
               });
             })();
             </script>'''
-        components.html(movil_html, height=max(altura_svg + 15, 480 + len(leyenda_movil)*40),
-                        scrolling=False)
+        # Dos iframes separados: la altura de la versión móvil ya no crea
+        # un enorme hueco en escritorio (y viceversa).
+        with st.container(key=f'quesito_escritorio_{clave}'):
+            components.html(svg, height=altura_svg + 15, scrolling=False)
+        with st.container(key=f'quesito_movil_{clave}'):
+            components.html(movil_html, height=365 + len(leyenda_movil) * 40,
+                            scrolling=False)
         st.caption(f'Total de gastos: **{dinero(total_pie)}**')
 
     st.subheader('Gastos del mes por categoría')
