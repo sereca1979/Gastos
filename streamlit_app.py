@@ -16,7 +16,22 @@ st.markdown('''
 @media (max-width: 700px) {
   .st-key-graficas_escritorio {display:none !important;}
   .st-key-graficas_movil {display:block !important;}
-  [data-testid="stMainBlockContainer"] {padding-left: 0.7rem; padding-right: 0.7rem;}
+  [data-testid="stMainBlockContainer"] {padding-left: .65rem; padding-right: .65rem; padding-top: 1rem;}
+  [data-testid="stMainBlockContainer"] h1 {font-size:1.65rem;}
+  [data-testid="stMainBlockContainer"] h2,
+  [data-testid="stMainBlockContainer"] h3 {font-size:1.22rem;}
+  [data-testid="stHorizontalBlock"] {flex-wrap:wrap; gap:.35rem;}
+  [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {min-width: 0 !important; flex: 1 1 30% !important;}
+  .indicador-valor {font-size:clamp(1rem,4.4vw,1.5rem) !important; white-space:nowrap;}
+  .indicador-titulo {font-size:.78rem !important;}
+  [data-testid="stTabs"] [role="tablist"] {overflow-x:auto; flex-wrap:nowrap; scrollbar-width:thin;}
+  [data-testid="stTabs"] button[role="tab"] {white-space:nowrap; flex-shrink:0; padding:.55rem .65rem;}
+  [data-testid="stDataFrame"], [data-testid="stDataEditor"] {max-width:100%; overflow-x:auto;}
+  [data-testid="stFileUploader"] {max-width:100%;}
+  [data-testid="stSidebar"] {max-width:85vw;}
+  .stButton button, [data-testid="stFormSubmitButton"] button {min-height:42px;}
+  .st-key-graficas_movil [data-testid="stVegaLiteChart"] {width:100%;}
+
 }
 @media (min-width: 701px) {
   .st-key-graficas_movil {display:none !important;}
@@ -385,7 +400,81 @@ with tabs[0]:
               })();
               </script>'''
         )
-        components.html(svg, height=altura_svg + 15, scrolling=False)
+        # En móvil el donut y la leyenda se apilan. No se reduce el SVG
+        # de escritorio a una miniatura ilegible.
+        from html import escape as html_escape
+        import json
+        escala_movil = 0.66
+        donut_movil = (
+            '<svg viewBox="0 0 480 480" class="donut-mobile" role="img" '
+            'aria-label="Distribución de gastos por categoría">'
+            + ''.join(sectores_svg)
+            + f'<circle cx="{cx}" cy="{cy}" r="{radio_int}" fill="#151515"/>'
+            + f'<text x="{cx}" y="{cy+8}" text-anchor="middle" fill="white" '
+              f'font-size="25" font-weight="700">{html_escape(dinero(total_pie))}</text>'
+            + '</svg>'
+        )
+        leyenda_movil = []
+        for fila in datos_pie.itertuples(index=False):
+            nombre = str(getattr(fila, '_0', fila[0]))
+            importe = float(fila[1])
+            color = color_de(nombre)
+            porcentaje = 100 * importe / total_pie
+            titulo = f'{nombre}: {dinero(importe)} ({porcentaje:.1f} %)'
+            leyenda_movil.append(
+                f'<div class="leyenda-fila" data-tooltip="{html_escape(titulo, quote=True)}">'
+                f'<span class="marca" style="background:{color}"></span>'
+                + '<span class="icono">'
+                + '<svg viewBox="0 0 24 24">'
+                + icono_svg(nombre, color, 0, 0, 1)
+                + '</svg></span>'
+                + f'<span class="categoria">{html_escape(nombre)}</span>'
+                + f'<span class="importe">{html_escape(dinero(importe))} '
+                  f'<small>({porcentaje:.1f} %)</small></span></div>'
+            )
+        # El tooltip usa click en móviles (sin depender de hover).
+        movil_html = (
+            '<style>'
+            '.vista-escritorio{display:block}.vista-movil{display:none}'
+            '@media(max-width:650px){.vista-escritorio{display:none}.vista-movil{display:block}}'
+            '.donut-mobile{width:min(100%,340px);display:block;margin:0 auto 12px}'
+            '.leyenda-fila{display:flex;align-items:center;gap:7px;padding:9px 3px;'
+            'border-bottom:1px solid #333;cursor:pointer;color:#eee;font:13px sans-serif}'
+            '.leyenda-fila .marca{width:10px;height:10px;border-radius:3px;flex-shrink:0}'
+            '.leyenda-fila .icono{width:19px;height:19px;flex-shrink:0}'
+            '.leyenda-fila .icono svg{width:19px;height:19px}'
+            '.leyenda-fila .categoria{flex:1;min-width:0;overflow-wrap:anywhere}'
+            '.leyenda-fila .importe{text-align:right;white-space:nowrap;font-weight:600}'
+            '.leyenda-fila small{color:#aaa;font-size:11px}'
+            '</style>'
+            '<div class="vista-escritorio">' + svg + '</div>'
+            '<div class="vista-movil">' + donut_movil + ''.join(leyenda_movil) + '</div>'
+        )
+        # Reutilizamos el manejador de tooltip y lo adaptamos a toque.
+        # Solo el HTML visible se inserta; no hay scroll horizontal en móvil.
+        movil_html += '''<div id="tip-movil" style="display:none;position:fixed;z-index:1000;
+            background:#292929;color:white;padding:9px 12px;border:1px solid #777;
+            border-radius:7px;font:13px sans-serif;pointer-events:none"></div>
+            <script>
+            (function(){
+              const tip=document.getElementById('tip-movil');
+              const els=document.querySelectorAll('[data-tooltip]');
+              function show(el,ev){
+                tip.textContent=el.getAttribute('data-tooltip');tip.style.display='block';
+                const x=(ev.clientX||innerWidth/2),y=(ev.clientY||120);
+                tip.style.left=Math.max(5,Math.min(x+10,innerWidth-tip.offsetWidth-5))+'px';
+                tip.style.top=Math.max(5,Math.min(y+10,innerHeight-tip.offsetHeight-5))+'px';
+              }
+              els.forEach(el=>{
+                el.addEventListener('pointerenter',e=>show(el,e));
+                el.addEventListener('pointermove',e=>show(el,e));
+                el.addEventListener('pointerleave',()=>tip.style.display='none');
+                el.addEventListener('click',e=>{show(el,e);setTimeout(()=>tip.style.display='none',2400)});
+              });
+            })();
+            </script>'''
+        components.html(movil_html, height=max(altura_svg + 15, 480 + len(leyenda_movil)*40),
+                        scrolling=False)
         st.caption(f'Total de gastos: **{dinero(total_pie)}**')
 
     st.subheader('Gastos del mes por categoría')
@@ -537,7 +626,7 @@ with tabs[1]:
     if movimientos:
         st.caption('Modifica la categoría directamente en la tabla y pulsa «Guardar categorías». '
                    'Los cambios también se recordarán para próximas importaciones.')
-        tamano_tabla = st.selectbox('Movimientos por página', [100, 250, 500], index=1)
+        tamano_tabla = st.selectbox('Movimientos por página', [25, 50, 100, 250], index=1)
         total_paginas = max(1, (len(movimientos) + tamano_tabla - 1) // tamano_tabla)
         pagina_tabla = st.number_input('Página', min_value=1, max_value=total_paginas, value=1, step=1)
         lote_tabla = movimientos[(pagina_tabla-1)*tamano_tabla:pagina_tabla*tamano_tabla]
@@ -640,57 +729,6 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader('Categorías personalizables')
-    if st.button('Crear categorías de ingresos compensatorios'):
-        try:
-            existentes = {(c['tipo'], c['nombre']) for c in categorias}
-            pendientes = [
-                {'usuario_id': st.session_state.usuario_id, 'tipo': 'ingreso', 'nombre': nombre}
-                for nombre in sorted(CATEGORIAS_COMPENSACION)
-                if ('ingreso', nombre) not in existentes
-            ]
-            if pendientes:
-                st.session_state.cliente.table('categorias').insert(pendientes).execute()
-            st.success('Categorías de ingresos compensatorios disponibles.')
-            st.rerun()
-        except Exception as exc:
-            st.error(f'No se pudieron crear las categorías: {exc}')
-
-    st.caption('Los cambios de categorías no eliminan movimientos existentes.')
-    if st.button('Aplicar cambios: Coche y Transportes + Dani ingreso'):
-        try:
-            cli = st.session_state.cliente
-            uid = st.session_state.usuario_id
-            gastos = {c['nombre']: c for c in categorias if c['tipo'] == 'gasto'}
-            ingresos = {c['nombre']: c for c in categorias if c['tipo'] == 'ingreso'}
-            destino = gastos.get('Coche y Transportes')
-            if destino is None and 'Transporte' in gastos:
-                ejecutar('categorias', 'update', {'nombre': 'Coche y Transportes'}, gastos['Transporte']['id'])
-                destino_id = gastos['Transporte']['id']
-            elif destino is None:
-                r = cli.table('categorias').insert({'usuario_id': uid, 'tipo': 'gasto',
-                    'nombre': 'Coche y Transportes'}).execute()
-                destino_id = r.data[0]['id']
-            else:
-                destino_id = destino['id']
-            # Reasignar operaciones y reglas anteriores sin borrar movimientos.
-            for nombre_antiguo in ('Viajes', 'Transporte'):
-                antigua = gastos.get(nombre_antiguo)
-                if antigua and antigua['id'] != destino_id:
-                    cli.table('movimientos').update({'categoria_id': destino_id}).eq(
-                        'usuario_id', uid).eq('categoria_id', antigua['id']).execute()
-                    cli.table('reglas_categorias').update({'categoria_id': destino_id}).eq(
-                        'usuario_id', uid).eq('categoria_id', antigua['id']).execute()
-                    # No eliminar categorías si están referenciadas por presupuestos.
-                    cli.table('categorias').delete().eq('usuario_id', uid).eq(
-                        'id', antigua['id']).execute()
-            if 'Dani' not in ingresos:
-                cli.table('categorias').insert({'usuario_id': uid, 'tipo': 'ingreso',
-                                                'nombre': 'Dani'}).execute()
-            st.success('Categorías actualizadas. Los movimientos se conservan.')
-            st.rerun()
-        except Exception as exc:
-            st.error(f'No se completó el cambio: {exc}')
-
     st.caption('Puedes crear las categorías iniciales que falten sin duplicar las existentes.')
     if st.button('Crear categorías iniciales que falten'):
         existentes_cat = {(c['tipo'], c['nombre'].casefold()) for c in categorias}
