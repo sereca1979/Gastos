@@ -714,24 +714,25 @@ with tabs[0]:
                                f'{abs(variacion):.0f} % menos que la media de '
                                f'{len(comparables)} meses anteriores (mismos días de mes).'))
 
-    # 3. Proyección lineal del gasto, solo durante el mes actual y con muestra suficiente.
-    if mes_en_curso and dias_observados >= 7 and dias_observados < dias_mes:
-        gasto_hasta_hoy = gastos
-        estimado = gasto_hasta_hoy * Decimal(dias_mes) / Decimal(dias_observados)
-        presupuesto_total = sum((v for v in limites.values() if v > 0), Decimal('0'))
-        if presupuesto_total > 0:
-            # Comparar exclusivamente las categorías presupuestadas; evita mezclar alcances.
-            gasto_controlado = sum((gasto_categoria_hasta(mes, nombre, dias_observados)
-                                   for nombre, limite in limites.items() if limite > 0), Decimal('0'))
-            estimado_controlado = gasto_controlado * Decimal(dias_mes) / Decimal(dias_observados)
-            if estimado_controlado > presupuesto_total * Decimal('1.05'):
-                avisos.append((1, '📊', 'Previsión: superarás el presupuesto',
-                               f'Gasto estimado en categorías presupuestadas: {dinero(estimado_controlado)} '
-                               f'frente a {dinero(presupuesto_total)}. Proyección lineal orientativa.'))
-        elif gasto_hasta_hoy > 0:
-            avisos.append((3, '📊', 'Previsión de gasto a fin de mes',
-                           f'Al ritmo actual: aproximadamente {dinero(estimado)}. '
-                           'Estimación lineal orientativa, no incluye pagos futuros conocidos.'))
+    # 3. Previsión individual para cada categoría con presupuesto del mes.
+    # Solo se proyecta durante el mes en curso y tras al menos 7 días de datos.
+    if mes_en_curso and 7 <= dias_observados < dias_mes:
+        for nombre, limite in limites.items():
+            if limite <= 0:
+                continue
+            gastado = gasto_categoria_hasta(mes, nombre, dias_observados)
+            if gastado <= 0:
+                continue
+            estimado = gastado * Decimal(dias_mes) / Decimal(dias_observados)
+            # Evitar duplicar una alerta de presupuesto ya superado.
+            if gastado >= limite:
+                continue
+            if estimado > limite * Decimal('1.05'):
+                exceso = estimado - limite
+                avisos.append((1, '📊', f'{nombre}: previsión de superar el presupuesto',
+                               f'Gasto previsto: {dinero(estimado)} frente a {dinero(limite)} '
+                               f'de presupuesto (exceso estimado: {dinero(exceso)}). '
+                               'Proyección lineal orientativa.'))
 
     avisos.sort(key=lambda a: a[0])
     if avisos:
