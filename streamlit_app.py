@@ -749,74 +749,97 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader('Presupuestos mensuales')
-    st.caption('Define un límite mensual solo para las categorías de gasto que quieras controlar. Se aplica a todos los meses hasta que lo modifiques.')
+    st.caption('Selecciona un mes y define los presupuestos solo para las categorías que quieras controlar. Cada mes conserva sus propios importes.')
     try:
         presupuestos = consultar('presupuestos')
-    except Exception:
-        st.error('No se pudo acceder a la tabla presupuestos. Ejecuta primero el SQL facilitado en Supabase.')
+    except Exception as exc:
+        st.error(f'No se pudo acceder a la tabla presupuestos: {exc}')
         presupuestos = None
     if presupuestos is not None:
         cats_gasto = sorted([c for c in categorias if c['tipo'] == 'gasto'], key=lambda c: c['nombre'].casefold())
-        presup_por_id = {str(p['categoria_id']): p for p in presupuestos}
+        ids_gasto = {str(c['id']) for c in cats_gasto}
+        hoy_pres = date.today()
+        meses_existentes = {str(p['mes'])[:7] for p in presupuestos if p.get('mes')}
+        meses_movimientos = {str(m['fecha'])[:7] for m in movimientos}
+        meses_opciones = sorted(meses_existentes | meses_movimientos |
+                               {f'{ano}-{mes:02d}' for ano in range(hoy_pres.year-1, hoy_pres.year+2)
+                                for mes in range(1, 13)}, reverse=True)
+        mes_edicion = st.selectbox('Mes del presupuesto', meses_opciones,
+                                   index=meses_opciones.index(hoy_pres.strftime('%Y-%m')),
+                                   format_func=lambda x: f'{x[5:7]}/{x[:4]}', key='mes_edicion_presupuesto')
+        presup_por_mes = {}
+        for p in presupuestos:
+            if p.get('mes'):
+                clave = (str(p['mes'])[:7], str(p['categoria_id']))
+                presup_por_mes[clave] = p
+
         with st.form('definir_presupuestos'):
-            st.caption('Deja el importe en cero para quitar el presupuesto de una categoría.')
+            st.caption('Deja un importe en cero para quitar el presupuesto de esa categoría y mes.')
             nuevos_presupuestos = {}
             for cat in cats_gasto:
-                anterior = presup_por_id.get(str(cat['id']))
-                importe_anterior = float(anterior['importe_mensual']) if anterior else 0.0
+                anterior = presup_por_mes.get((mes_edicion, str(cat['id'])))
+                importe_anterior = float(anterior['importe']) if anterior else 0.0
                 st.markdown(
                     f'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;'
                     f'background:{color_de(cat["nombre"])};margin-right:7px"></span>'
                     f'<span>{__import__("html").escape(cat["nombre"])}</span>',
                     unsafe_allow_html=True)
                 nuevos_presupuestos[str(cat['id'])] = st.number_input(
-                    'Presupuesto mensual', label_visibility='collapsed', min_value=0.0, value=importe_anterior,
-                    step=10.0, format='%.2f', key=f'presupuesto_{cat["id"]}')
+                    'Presupuesto mensual', label_visibility='collapsed', min_value=0.0,
+                    value=importe_anterior, step=10.0, format='%.2f',
+                    key=f'presupuesto_{mes_edicion}_{cat["id"]}')
             guardar_pres = st.form_submit_button('Guardar presupuestos')
         if guardar_pres:
             try:
                 for cat in cats_gasto:
                     cid = str(cat['id'])
                     nuevo = Decimal(str(nuevos_presupuestos[cid])).quantize(Decimal('0.01'))
-                    anterior = presup_por_id.get(cid)
-                    if anterior and nuevo == Decimal(str(anterior['importe_mensual'])):
+                    anterior = presup_por_mes.get((mes_edicion, cid))
+                    if anterior and nuevo == Decimal(str(anterior['importe'])):
                         continue
                     if anterior and nuevo == 0:
                         ejecutar('presupuestos', 'delete', identificador=anterior['id'])
                     elif anterior:
-                        ejecutar('presupuestos', 'update', {'importe_mensual': str(nuevo)}, anterior['id'])
+                        ejecutar('presupuestos', 'update', {'importe': str(nuevo),
+                                                          'importe_mensual': str(nuevo)}, anterior['id'])
                     elif nuevo > 0:
                         ejecutar('presupuestos', 'insert', {
                             'usuario_id': st.session_state.usuario_id,
-                            'categoria_id': cat['id'], 'importe_mensual': str(nuevo)})
+                            'categoria_id': cat['id'], 'mes': f'{mes_edicion}-01',
+                            'importe': str(nuevo), 'importe_mensual': str(nuevo)})
                 st.success('Presupuestos guardados.')
                 st.rerun()
             except Exception as exc:
                 st.error(f'No se pudieron guardar los presupuestos: {exc}')
 
-        activos = {cid: Decimal(str(p['importe_mensual'])) for cid, p in presup_por_id.items()
-                   if Decimal(str(p['importe_mensual'])) > 0 and cid in {str(c['id']) for c in cats_gasto}}
-        if not activos:
-            st.info('Establece al menos un presupuesto para ver las comparativas.')
-        else:
-            def gasto_presupuestado(mes_clave, categoria_id=None):
-                acumulado = Decimal('0')
-                for m in movimientos:
-                    if es_excluido(m) or not str(m['fecha']).startswith(mes_clave):
-                        continue
-                    cid = str(m.get('categoria_id'))
-                    if cid not in activos or (categoria_id is not None and cid != categoria_id):
-                        continue
-                    importe = Decimal(str(m['importe']))
-                    if m['tipo'] == 'gasto':
-                        acumulado += importe
-                    elif m['tipo'] == 'ingreso' and categoria_movimiento(m) in CATEGORIAS_COMPENSACION:
-                        acumulado -= importe
-                return acumulado
+        def activos_mes(mes_clave):
+            return {cid: Decimal(str(p['importe'])) for (mes, cid), p in presup_por_mes.items()
+                    if mes == mes_clave and cid in ids_gasto and Decimal(str(p['importe'])) > 0}
 
-            hoy_pres = date.today()
-            meses_pres = sorted({str(m['fecha'])[:7] for m in movimientos} | {hoy_pres.strftime('%Y-%m')}, reverse=True)
-            mes_pres = st.selectbox('Mes a comparar', meses_pres, key='mes_presupuestos')
+        def gasto_presupuestado(mes_clave, categoria_id=None):
+            ids = set(activos_mes(mes_clave))
+            acumulado = Decimal('0')
+            for m in movimientos:
+                if es_excluido(m) or not str(m['fecha']).startswith(mes_clave):
+                    continue
+                cid = str(m.get('categoria_id'))
+                if cid not in ids or (categoria_id is not None and cid != categoria_id):
+                    continue
+                importe = Decimal(str(m['importe']))
+                if m['tipo'] == 'gasto':
+                    acumulado += importe
+                elif m['tipo'] == 'ingreso' and categoria_movimiento(m) in CATEGORIAS_COMPENSACION:
+                    acumulado -= importe
+            return acumulado
+
+        st.subheader('Comparación mensual por categoría')
+        mes_pres = st.selectbox('Mes a comparar', meses_opciones,
+                                index=meses_opciones.index(mes_edicion), key='mes_presupuestos',
+                                format_func=lambda x: f'{x[5:7]}/{x[:4]}')
+        activos = activos_mes(mes_pres)
+        if not activos:
+            st.info('No hay presupuestos definidos para este mes.')
+        else:
             total_pres = sum(activos.values(), Decimal('0'))
             gasto_mes = gasto_presupuestado(mes_pres)
             a, b, c = st.columns(3)
@@ -826,59 +849,58 @@ with tabs[2]:
             filas = []
             for cid, limite in activos.items():
                 real = gasto_presupuestado(mes_pres, cid)
+                diferencia = limite - real
                 filas.append({'Categoría': nombres_categorias.get(cid, 'Sin categoría'),
                               'Presupuesto': float(limite), 'Gasto real': float(real),
-                              'Diferencia': float(limite-real)})
+                              'Diferencia': float(diferencia)})
             detalle = pd.DataFrame(filas).sort_values('Categoría')
-            st.subheader('Comparación mensual por categoría')
             detalle_largo = detalle.melt(id_vars=['Categoría'], value_vars=['Presupuesto', 'Gasto real'],
                                          var_name='Tipo', value_name='Euros')
-            # Cada categoría conserva exactamente el color de su sector del quesito.
-            # Presupuesto: barra sólida; gasto real: mismo tono, más transparente.
             colores_detalle = sorted(detalle['Categoría'].unique().tolist())
             graf_mes = alt.Chart(detalle_largo).mark_bar().encode(
                 x=alt.X('Categoría:N', title=None, axis=alt.Axis(labelAngle=-30)),
                 xOffset=alt.XOffset('Tipo:N', sort=['Presupuesto', 'Gasto real']),
                 y=alt.Y('Euros:Q', title='Euros'),
                 color=alt.Color('Categoría:N', scale=alt.Scale(
-                    domain=colores_detalle, range=[color_de(c) for c in colores_detalle]),
-                    legend=None),
+                    domain=colores_detalle, range=[color_de(c) for c in colores_detalle]), legend=None),
                 opacity=alt.Opacity('Tipo:N', scale=alt.Scale(
                     domain=['Presupuesto', 'Gasto real'], range=[1.0, 0.48]),
                     legend=alt.Legend(title='Barra sólida: presupuesto · clara: gasto real')),
-                tooltip=['Categoría:N','Tipo:N',alt.Tooltip('Euros:Q', format=',.2f')]
+                tooltip=['Categoría:N', 'Tipo:N', alt.Tooltip('Euros:Q', format=',.2f')]
             ).properties(height=320)
             st.caption('Cada categoría utiliza el mismo color que en los gráficos circulares. Barra sólida: presupuesto; barra clara: gasto real.')
             st.altair_chart(graf_mes, use_container_width=True)
-            st.dataframe(detalle.style.format({'Presupuesto': dinero, 'Gasto real': dinero,
-                                                'Diferencia': dinero}),
-                         hide_index=True, use_container_width=True)
+            detalle['Diferencia'] = detalle['Diferencia'].map(
+                lambda v: ('🟢 ' if v > 0 else '🔴 ' if v < 0 else '⚪ ') + dinero(v))
+            st.dataframe(detalle, hide_index=True, use_container_width=True,
+                         column_config={'Presupuesto': st.column_config.NumberColumn(format='%.2f €'),
+                                        'Gasto real': st.column_config.NumberColumn(format='%.2f €')})
 
-            st.subheader('Evolución anual del presupuesto')
-            anos_pres = sorted({int(str(m['fecha'])[:4]) for m in movimientos} | {hoy_pres.year}, reverse=True)
-            ano_pres = st.selectbox('Año', anos_pres, key='ano_presupuestos')
-            nombres_meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
-            evolucion = pd.DataFrame([{
-                'Mes': nombres_meses[n-1], 'Número': n,
-                'Presupuesto': float(total_pres),
-                'Gasto real': float(gasto_presupuestado(f'{ano_pres}-{n:02d}'))}
-                for n in range(1, 13)])
-            evolucion_larga = evolucion.melt(id_vars=['Mes','Número'],
-                    value_vars=['Presupuesto','Gasto real'], var_name='Tipo', value_name='Euros')
-            evolucion_larga['Posición'] = evolucion_larga['Número'] + evolucion_larga['Tipo'].map(
-                {'Presupuesto':-0.19,'Gasto real':0.19})
-            graf_ano = alt.Chart(evolucion_larga).mark_bar(size=26).encode(
-                x=alt.X('Posición:Q', scale=alt.Scale(domain=[0.5,12.5]),
-                    axis=alt.Axis(values=list(range(1,13)),
-                        labelExpr="['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][datum.value - 1]",
-                        title=None, labelAngle=0)),
-                y=alt.Y('Euros:Q', title='Euros'),
-                color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Presupuesto','Gasto real'],
-                                range=['#0875d1','#82c8fa']), title=None),
-                tooltip=['Mes:N','Tipo:N',alt.Tooltip('Euros:Q', format=',.2f')]
-            ).properties(height=330)
-            st.altair_chart(graf_ano, use_container_width=True)
-            st.caption('El presupuesto anual se calcula aplicando los límites mensuales actuales a cada mes; no se guarda un histórico de cambios de presupuesto.')
+        st.subheader('Evolución anual del presupuesto')
+        anos_pres = sorted({int(x[:4]) for x in meses_opciones}, reverse=True)
+        ano_pres = st.selectbox('Año', anos_pres, index=anos_pres.index(int(mes_pres[:4])), key='ano_presupuestos')
+        nombres_meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+        evolucion = pd.DataFrame([{
+            'Mes': nombres_meses[n-1], 'Número': n,
+            'Presupuesto': float(sum(activos_mes(f'{ano_pres}-{n:02d}').values(), Decimal('0'))),
+            'Gasto real': float(gasto_presupuestado(f'{ano_pres}-{n:02d}'))}
+            for n in range(1, 13)])
+        evolucion_larga = evolucion.melt(id_vars=['Mes','Número'],
+                value_vars=['Presupuesto','Gasto real'], var_name='Tipo', value_name='Euros')
+        evolucion_larga['Posición'] = evolucion_larga['Número'] + evolucion_larga['Tipo'].map(
+            {'Presupuesto':-0.19,'Gasto real':0.19})
+        graf_ano = alt.Chart(evolucion_larga).mark_bar(size=26).encode(
+            x=alt.X('Posición:Q', scale=alt.Scale(domain=[0.5,12.5]),
+                axis=alt.Axis(values=list(range(1,13)),
+                    labelExpr="['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][datum.value - 1]",
+                    title=None, labelAngle=0)),
+            y=alt.Y('Euros:Q', title='Euros'),
+            color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Presupuesto','Gasto real'],
+                            range=['#0875d1','#82c8fa']), title=None),
+            tooltip=['Mes:N','Tipo:N',alt.Tooltip('Euros:Q', format=',.2f')]
+        ).properties(height=330)
+        st.altair_chart(graf_ano, use_container_width=True)
+        st.caption('Cada mes muestra únicamente el presupuesto que hayas guardado para ese mes.')
 
 with tabs[3]:
     st.subheader('Categorías personalizables')
