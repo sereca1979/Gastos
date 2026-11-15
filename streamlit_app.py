@@ -268,6 +268,13 @@ with tabs[0]:
             'Seguros e impuestos': '<path d="m12 2 9 4v6c0 6-4 9-9 11-5-2-9-5-9-11V6z"/>',
             'Regalos y donaciones': '<rect x="3" y="9" width="18" height="13" rx="1"/><path d="M2 9h20M12 9v13M12 9C3 9 5 2 9 3c2 0 3 3 3 6zm0 0c9 0 7-7 3-6-2 0-3 3-3 6z"/>',
             'Otros gastos': '<path d="M3 7 12 2l9 5v11l-9 5-9-5zM3 7l9 5 9-5m-9 5v11"/>',
+            'Compras': '<path d="M3 7h18l-1.5 14h-15zM8 8V6a4 4 0 0 1 8 0v2"/>',
+            'Colegio': '<path d="m2 9 10-6 10 6-10 6zM6 12v6c4 3 8 3 12 0v-6M22 9v8"/>',
+            'Loterías': '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h3M16 15l2 2"/>',
+            'Dani': '<circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4M9 14l3 4 3-4"/>',
+            'Ropa y compras': '<path d="M4 9h16l-1 13H5L4 9zM9 10V6a3 3 0 0 1 6 0v4"/>',
+            'Transporte': '<path d="M4 16 6 8h12l2 8v5h-3v-3H7v3H4v-5zM4 16h16"/>',
+            'Viajes': '<path d="M3 12 21 4l-6 17-4-7-8-2zM11 14l10-10"/>',
             'Sin categoría': '<circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 0 1 6 0c0 3-3 3-3 6m0 3v1"/>'
         }
         def icono_svg(nombre, color, x, y, escala=1):
