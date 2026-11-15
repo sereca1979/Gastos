@@ -690,7 +690,7 @@ with tabs[0]:
             avisos.append((1, '🟠', f'{nombre}: presupuesto casi agotado',
                            f'Has consumido el {porcentaje:.0f} % de {dinero(limite)}.{cola}'))
 
-    # 2 y 6. Comparación con los mismos días de hasta tres meses anteriores.
+    # 2 y 6. Comparación por días equivalentes; mejoras solo en meses cerrados.
     anteriores = meses_anteriores(mes)
     meses_con_datos = {str(m['fecha'])[:7] for m in movimientos
                        if not es_excluido(m) and m.get('tipo') in ('gasto', 'ingreso')}
@@ -709,7 +709,7 @@ with tabs[0]:
                 avisos.append((2, '📈', f'{nombre}: gasto superior al habitual',
                                f'{variacion:.0f} % más que la media de {len(comparables)} meses anteriores '
                                f'(mismos días de mes).'))
-            elif variacion <= -20 and promedio - actual >= Decimal('20'):
+            elif not mes_en_curso and variacion <= -20 and promedio - actual >= Decimal('20'):
                 avisos.append((4, '🟢', f'{nombre}: has reducido el gasto',
                                f'{abs(variacion):.0f} % menos que la media de '
                                f'{len(comparables)} meses anteriores (mismos días de mes).'))
